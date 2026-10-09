@@ -308,7 +308,7 @@
   function renderSideCard() {
     var pend = S.loans.filter(function (l) { return l.status === 'pending'; }).length;
     var od = S.assets.filter(isOverdueAsset).length;
-    $('#sideCard').innerHTML = '<span class="sc-ico">' + (od ? '⚠' : '◆') + '</span><span class="nav-txt"><b>' + (od ? 'ค้างคืน ' + od + ' ชิ้น' : 'ภาพรวมวันนี้') + '</b>' +
+    $('#sideCard').innerHTML = '<span class="sc-ico">' + (od ? '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 19h18L12 4z"/><path d="M12 10v4M12 17h.01"/></svg>' : '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>') + '</span><span class="nav-txt"><b>' + (od ? 'ค้างคืน ' + od + ' ชิ้น' : 'ภาพรวมวันนี้') + '</b>' +
       '<small>รออนุมัติ ' + pend + ' ใบ · ว่าง ' + S.assets.filter(function (a) { return a.status === 'available'; }).length + ' ชิ้น</small></span>';
     $('#sideCard').classList.toggle('warn', !!od);
   }
@@ -426,12 +426,12 @@
     function render(a, loans, truncated) {
       var od = isOverdueAsset(a), loan = a.currentLoanId && S.loans.find(function (l) { return l.loanId === a.currentLoanId; });
       var act = [];
-      if (a.status === 'available' && P().loanRequest) act.push('<button class="btn primary" data-act="cart">' + (S.cart.indexOf(a.assetId) >= 0 ? '✓ อยู่ในตะกร้าแล้ว' : '+ ใส่ตะกร้าเบิก') + '</button>');
+      if (a.status === 'available' && P().loanRequest) act.push('<button class="btn primary" data-act="cart">' + (S.cart.indexOf(a.assetId) >= 0 ? 'อยู่ในตะกร้าแล้ว' : '+ ใส่ตะกร้าเบิก') + '</button>');
       if (loan) act.push('<button class="btn" data-act="loan">ดูใบเบิก ' + esc(loan.loanId) + '</button>');
       if (P().assetManage) act.push('<button class="btn" data-act="edit">แก้ไข</button>', '<button class="btn" data-act="print">พิมพ์ฉลาก</button>');
       var hist = !loans ? '<p class="muted small">กำลังโหลดประวัติ…</p>' : loans.length ? '<ul class="timeline">' + loans.slice(0, 20).map(function (l) {
         var it = (l.items || []).find(function (i) { return i.assetId === a.assetId; }) || {};
-        var end = it.itemStatus === 'lost' ? ' → แจ้งสูญหาย ' + fmtDT(it.returnedAt) : ' → คืน ' + fmtDT(it.returnedAt);
+        var end = it.itemStatus === 'lost' ? ' · แจ้งสูญหาย ' + fmtDT(it.returnedAt) : ' · คืน ' + fmtDT(it.returnedAt);
         return '<li><b>' + esc(l.loanId) + '</b> ' + pill(loanPillClass(l), loanStatusText(l)) + '<br>' + esc(l.project) + ' · ' + esc(l.requesterName || l.requester) +
           '<br><span class="muted">ออก ' + fmtDT(it.checkedOutAt) + end + (it.damaged ? ' · เสียหาย' : '') + '</span></li>';
       }).join('') + '</ul>' + (loans.length > 20 || truncated ? '<p class="muted small">แสดงเฉพาะรายการล่าสุด — ประวัติทั้งหมดดูได้ที่แท็บรายงาน</p>' : '')
@@ -536,7 +536,7 @@
       if (f === 'mine') return l.requester === me || l.approver === me;
       return true;
     });
-    $('#loanList').innerHTML = list.length ? list.map(loanCard).join('') : '<li class="empty">' + (f === 'action' ? 'ไม่มีรายการที่ต้องจัดการ 🎉' : 'ไม่มีใบเบิก') + '</li>';
+    $('#loanList').innerHTML = list.length ? list.map(loanCard).join('') : '<li class="empty">' + (f === 'action' ? 'ไม่มีรายการที่ต้องจัดการ' : 'ไม่มีใบเบิก') + '</li>';
   }
   function loanCard(l) {
     var od = loanOverdue(l);
