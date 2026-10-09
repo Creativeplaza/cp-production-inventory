@@ -286,11 +286,34 @@
     $$('.side-nav [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x.dataset.tab === t)); });
     ['assets', 'loans', 'report', 'users', 'settings'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
     $('#pageTitle').textContent = TAB_TITLES[t] || '';
-    replay($('#tab-' + t), 'page-enter'); replay($('#pageTitle'), 'title-enter'); stagger();
+    replay($('#tab-' + t), 'page-enter'); replay($('#pageTitle'), 'title-enter'); stagger(); moveBlob(true);
     $('#cartBar').hidden = t !== 'assets' || !S.cart.length;
     if (t === 'users' && S.me) loadUsersTab();
     try { sessionStorage.setItem('cpi_tab', t); } catch (e) {}
   }
+  // Liquid selection blob behind the sidebar menu: on a tab change it stretches to bridge the old and new item,
+  // then settles on the new one (a fluid "pour"); layout changes just snap it into place.
+  var blob = null, blobPos = null, blobAnim = null, reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+  function moveBlob(animate) {
+    var nav = $('.side-nav'); if (!nav) return;
+    if (!blob) { blob = document.createElement('span'); blob.className = 'nav-blob'; blob.setAttribute('aria-hidden', 'true'); nav.insertBefore(blob, nav.firstChild); nav.classList.add('has-blob'); }
+    var el = $('.side-nav .nav-item[aria-selected=true]');
+    if (!el || el.hidden || !el.offsetHeight) { blob.style.opacity = '0'; blobPos = null; return; }
+    var to = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }, from = blobPos;
+    function at(p) { return { transform: 'translate(' + p.x + 'px,' + p.y + 'px)', width: p.w + 'px', height: p.h + 'px' }; }
+    if (blobAnim) { blobAnim.cancel(); blobAnim = null; }
+    Object.assign(blob.style, at(to), { opacity: '' }); blobPos = to;
+    if (!animate || !from || reduceMotion.matches || !blob.animate || (from.y === to.y && from.x === to.x)) return;
+    var top = Math.min(from.y, to.y), span = Math.abs(to.y - from.y) + (to.y > from.y ? to.h : from.h), thin = Math.min(from.w, to.w) * 0.9;
+    var mid = { x: to.x + (to.w - thin) / 2, y: top, w: thin, h: span };
+    blobAnim = blob.animate([
+      Object.assign(at(from), { borderRadius: '16px', easing: 'cubic-bezier(.55,0,.35,1)' }),  // stretch toward the new item
+      Object.assign(at(mid), { borderRadius: '26px', offset: 0.4, easing: 'cubic-bezier(.2,1.25,.35,1)' }), // pull the tail in, slight overshoot
+      Object.assign(at(to), { borderRadius: '16px' })
+    ], { duration: 600, easing: 'linear' });
+    blobAnim.onfinish = function () { blobAnim = null; };
+  }
+  if (window.ResizeObserver) new ResizeObserver(function () { moveBlob(false); }).observe($('.side-nav'));
   // Restart a CSS entrance animation on an element.
   function replay(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
   // Cards cascade in on the next render of the lists (tab switch / fresh data), not on every filter keystroke.

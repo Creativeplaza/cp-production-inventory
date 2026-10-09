@@ -379,3 +379,42 @@ tbody tr:last-child td{border-bottom:0}
   .label .nm{font-size:5.5pt;line-height:1.2;max-height:13mm;overflow:hidden}
 }
 .lightbox:focus{outline:none}
+
+/* ---------- liquid motion (owner 2026-10-10): spring curves, fluid page/sheet entrances, squishy presses, flowing nav blob ---------- */
+:root{--spring:cubic-bezier(.2,1.12,.3,1);--spring-bouncy:cubic-bezier(.3,1.5,.4,1);--glide:cubic-bezier(.22,1,.36,1)}
+@supports (transition-timing-function:linear(0,1)){
+  :root{
+    --spring:linear(0,.006,.025 2.8%,.101 6.1%,.539 18.9%,.721 25.3%,.849 31.5%,.937 38.1%,.968 41.8%,.991 45.7%,1.006 50.1%,1.015 55%,1.017 63.9%,1.001 85.6%,1);
+    --spring-bouncy:linear(0,.009,.035 2.1%,.141,.281 6.7%,.723 12.9%,.938 16.7%,1.017,1.077,1.121,1.149 24.3%,1.159,1.163,1.161,1.154 29.9%,1.129 32.8%,1.051 39.6%,1.017 43.1%,.991,.977 51%,.974 53.8%,.975 57.1%,.997 69.8%,1.003 76.9%,1);
+  }
+}
+@keyframes liquidIn{0%{opacity:0;transform:translateY(18px) scale(.985);filter:blur(8px)}55%{opacity:1;filter:blur(0)}100%{opacity:1;transform:none;filter:none}}
+@keyframes liquidUp{0%{opacity:0;transform:translateY(16px) scaleY(.96)}60%{opacity:1}100%{opacity:1;transform:none}}
+@keyframes liquidPop{0%{opacity:0;transform:translateY(22px) scale(.92);filter:blur(6px)}50%{opacity:1;filter:blur(0)}100%{opacity:1;transform:none;filter:none}}
+@keyframes liquidSheet{0%{transform:translateY(70px) scaleY(.96);opacity:.3}60%{opacity:1}100%{transform:none;opacity:1}}
+@keyframes liquidOut{to{opacity:0;transform:translateY(10px) scale(.96);filter:blur(4px)}}
+.page-enter{animation:liquidIn .62s var(--spring) both}
+.title-enter{animation:liquidIn .5s var(--spring) both}
+.stagger>li,.stagger>.list>li{animation:liquidUp .6s var(--spring) both;transform-origin:50% 0}
+.overlay.opening{animation:fadeIn .3s var(--glide) both}
+.overlay.opening .sheet{animation:liquidSheet .6s var(--spring) both;transform-origin:50% 100%}
+.overlay.closing .sheet{animation:liquidOut .18s ease-in both}
+@media (min-width:700px){.overlay.opening .sheet{animation-name:liquidPop;transform-origin:50% 40%}.overlay.closing .sheet{animation-name:liquidOut}}
+#lightboxImg.opening{animation:liquidPop .5s var(--spring) both}
+.toast{transition:opacity .25s var(--glide),transform .55s var(--spring-bouncy)}
+.hover-card{transition:opacity .2s var(--glide),transform .45s var(--spring)}
+/* presses squish and spring back */
+.btn,.chip,.nav-item,.fab,.stat,.icon-btn,.side-card,.item,.seg button,.ph-t,.ph-add,.link-btn,.ph-x,.gal-nav,.lb-nav,.cover{transition:transform .55s var(--spring-bouncy),box-shadow .3s var(--glide),background .25s var(--glide),border-color .2s,color .2s,filter .2s,opacity .2s}
+.btn:active,.chip:active,.icon-btn:active,.fab:active,.link-btn:active,.seg button:active{transform:scale(.95,.9);transition-duration:.12s;transition-timing-function:ease-out}
+.nav-item:active{transform:scale(.97,.93);transition-duration:.12s}
+.stat:active,.side-card:active{transform:scale(.97,.94);transition-duration:.12s}
+.item:has(.main:active),.item:has([data-la]:active){transform:scale(.985,.97);transition-duration:.12s}
+.cover:active,.ph-t:active{transform:scale(.92);transition-duration:.12s}
+.rpl{animation:rpl .7s var(--glide) forwards}
+/* flowing selection blob behind the sidebar menu */
+.side-nav{position:relative}
+.side-nav .nav-item{z-index:1}
+.nav-blob{position:absolute;left:0;top:0;width:0;height:0;border-radius:16px;background:var(--accent);box-shadow:0 12px 26px -12px var(--accent-glow);pointer-events:none;z-index:0;opacity:0;transition:opacity .2s}
+.side-nav.has-blob .nav-blob{opacity:1}
+.side-nav.has-blob .nav-item[aria-selected=true]{background:transparent;box-shadow:none}
+.shell.collapsed .nav-blob{display:none}
