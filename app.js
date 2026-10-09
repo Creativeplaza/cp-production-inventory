@@ -92,7 +92,8 @@
     var ctl = new AbortController(); var to = setTimeout(function () { ctl.abort(); }, 30000);
     opt.signal = ctl.signal; opt.redirect = 'follow';
     return fetch(url, opt).then(function (r) { return r.text(); }).then(function (t) {
-      try { return JSON.parse(t); } catch (e) { throw { error: 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง' }; }
+      // Apps Script occasionally returns a transient HTML error page instead of JSON → treat like a network blip.
+      try { return JSON.parse(t); } catch (e) { throw { network: true, transient: true, error: 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง ลองใหม่อีกครั้ง' }; }
     }, function () { throw { network: true, error: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้' }; }).finally(function () { clearTimeout(to); });
   }
   function check(r) {
