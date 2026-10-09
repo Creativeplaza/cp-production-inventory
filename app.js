@@ -524,13 +524,13 @@
       }).join('') + '</ul>' + (loans.length > 20 || truncated ? '<p class="muted small">แสดงเฉพาะรายการล่าสุด — ประวัติทั้งหมดดูได้ที่แท็บรายงาน</p>' : '')
         : '<p class="muted small">ยังไม่มีประวัติการเบิก</p>';
       $('#sheetBody').innerHTML =
+        (loans ? (gallery(photos) || '<p class="muted small">ยังไม่มีรูปอุปกรณ์</p>') : hasPhotos(a) ? '<div class="gallery loading"></div>' : '') +
         '<div class="qr-box">' + qrSvg(assetUrl(a.assetId)) + '<div>' + (od ? pill('overdue', 'ค้างคืน ' + daysLate(a.dueDate) + ' วัน') : pill(a.status, ASSET_STATUS[a.status])) +
         '<p class="muted small">' + esc(a.sku) + '</p></div></div>' +
         '<dl class="kv"><dt>รุ่น</dt><dd>' + esc(a.model || '–') + '</dd><dt>Serial</dt><dd>' + esc(a.serial || '–') + '</dd>' +
         '<dt>หมวด</dt><dd>' + esc(catName(a.category)) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
         (a.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(userName(a.holder)) + '</dd><dt>Project</dt><dd>' + esc(a.project) + '</dd><dt>กำหนดคืน</dt><dd>' + fmtDate(a.dueDate) + '</dd>' : '') +
         (a.notes ? '<dt>หมายเหตุ</dt><dd>' + esc(a.notes) + '</dd>' : '') + '</dl>' +
-        (loans ? (thumbStrip(photos) || '<p class="muted small">ยังไม่มีรูปอุปกรณ์</p>') : '') +
         '<div class="row">' + act.join('') + '</div><h3>ประวัติการเบิก (ล่าสุด)</h3>' + hist;
       $('#sheetBody').onclick = function (e) {
         var b = e.target.closest('[data-act]'); if (!b) return;
@@ -539,6 +539,7 @@
         if (b.dataset.act === 'edit') openAssetForm(a, photos);
         if (b.dataset.act === 'print') printLabels([a.assetId]);
       };
+      initGallery($('#sheetBody .gallery[data-gallery]'), mg);
     }
   }
 
@@ -622,20 +623,96 @@
     var ok = (photos || []).filter(function (p) { return safeThumb(p.thumb); });
     return ok.length ? '<div class="ph-strip">' + ok.map(function (p) { return '<button type="button" class="ph-t" data-photo="' + esc(p.photoId) + '"><img alt="" src="' + esc(safeThumb(p.thumb)) + '"></button>'; }).join('') + '</div>' : '';
   }
-  // Full photo in a lightbox (separate from the sheet so the detail stays open).
-  // Each open/close/logout bumps lbGen; a full-photo response only lands if its own opening is still current.
-  var lbGen = 0;
-  function openPhoto(id, thumb) {
-    var lb = $('#lightbox'), img = $('#lightboxImg'), mine = ++lbGen;
-    img.src = safeThumb(thumb) || ''; lb.hidden = false; replay(lb, 'opening');
-    apiGet('getPhoto', { photoId: id }).then(function (r) {
-      var p = r.photo || {}; if (mine !== lbGen) return;
-      if (/^image\/(jpeg|png|webp)$/.test(p.mime) && /^[A-Za-z0-9+\/=]+$/.test(p.data || '')) img.src = 'data:' + p.mime + ';base64,' + p.data;
-    }).catch(function (e) { if (mine === lbGen) toast(errText(e), true); });
+  var ICON_PREV = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+  var ICON_NEXT = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
+  // Detail gallery: every asset photo, swipe/scroll-snap + arrows, shown uncropped (contain).
+  function gallery(photos) {
+    var ok = (photos || []).filter(function (p) { return safeThumb(p.thumb); });
+    if (!ok.length) return '';
+    return '<div class="gallery" data-gallery><div class="gal-track">' + ok.map(function (p, i) {
+      return '<button type="button" class="gal-slide" data-photo="' + esc(p.photoId) + '" aria-label="รูปที่ ' + (i + 1) + ' จาก ' + ok.length + '"><img alt="" src="' + esc(safeThumb(p.thumb)) + '"></button>';
+    }).join('') + '</div>' + (ok.length > 1 ? '<button type="button" class="gal-nav prev" data-step="-1" aria-label="รูปก่อนหน้า" disabled>' + ICON_PREV + '</button>' +
+      '<button type="button" class="gal-nav next" data-step="1" aria-label="รูปถัดไป">' + ICON_NEXT + '</button><div class="gal-count">1 / ' + ok.length + '</div>' : '') + '</div>';
   }
-  function closePhoto() { lbGen++; $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
-  $('#lightbox').addEventListener('click', closePhoto);
-  document.addEventListener('click', function (e) { var t = e.target.closest('[data-photo]'); if (t) { var im = t.querySelector('img'); openPhoto(t.dataset.photo, im && im.getAttribute('src')); } });
+  // Thumbs are ~240 px: swap the visible slide (and its neighbour) for the full photo, one modal at a time.
+  function initGallery(el, mg) {
+    if (!el) return;
+    var track = el.querySelector('.gal-track'), slides = track.children, n = slides.length, idx = -1;
+    function upgrade(i) {
+      var sl = slides[i]; if (!sl || sl.dataset.full) return; sl.dataset.full = '1';
+      fullPhoto(sl.dataset.photo).then(function (src) {
+        if (src && mg === S.modal && sl.isConnected) sl.querySelector('img').src = src;
+      }).catch(function () { delete sl.dataset.full; });
+    }
+    function show(i) {
+      if (i === idx) return; idx = i; upgrade(i); if (i + 1 < n) upgrade(i + 1);
+      if (n < 2) return;
+      el.querySelector('.gal-count').textContent = (i + 1) + ' / ' + n;
+      el.querySelector('.gal-nav.prev').disabled = i === 0; el.querySelector('.gal-nav.next').disabled = i === n - 1;
+    }
+    var target = null; // arrow click: show the destination now, ignore the in-between frames of the smooth scroll
+    track.addEventListener('scroll', function () {
+      var i = Math.max(0, Math.min(n - 1, Math.round(track.scrollLeft / Math.max(1, track.clientWidth))));
+      if (target != null) { if (i !== target) return; target = null; }
+      show(i);
+    }, { passive: true });
+    ['pointerdown', 'wheel', 'touchstart'].forEach(function (ev) { track.addEventListener(ev, function () { target = null; }, { passive: true }); });
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('.gal-nav'); if (!b) return;
+      var i = Math.max(0, Math.min(n - 1, idx + +b.dataset.step)); target = i; show(i);
+      track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' });
+    });
+    show(0);
+  }
+  // Full photos: one request per photo per session, small LRU (each can be ~1.4 MB).
+  var fullCache = {}, fullOrder = [], fullGen = -1;
+  function fullPhoto(id) {
+    if (fullGen !== S.gen) { fullCache = {}; fullOrder = []; fullGen = S.gen; }
+    if (fullCache[id]) return fullCache[id];
+    var g = S.gen, pr = apiGet('getPhoto', { photoId: id }).then(function (r) {
+      var p = r.photo || {};
+      return /^image\/(jpeg|png|webp)$/.test(p.mime) && /^[A-Za-z0-9+\/=]+$/.test(p.data || '') ? 'data:' + p.mime + ';base64,' + p.data : '';
+    });
+    pr.catch(function () { if (fullGen === g && fullCache[id] === pr) { delete fullCache[id]; fullOrder = fullOrder.filter(function (k) { return k !== id; }); } });
+    fullCache[id] = pr; fullOrder.push(id);
+    while (fullOrder.length > 12) delete fullCache[fullOrder.shift()];
+    return pr;
+  }
+  // Full photo in a lightbox (separate from the sheet so the detail stays open); ‹ › / arrow keys / swipe
+  // move within the group it was opened from. Each open/step/close/logout bumps lbGen; a full-photo
+  // response only lands if its own showing is still current.
+  var lbGen = 0, lbList = [], lbIdx = 0, lbSwiped = false, lbX = null;
+  function openPhoto(id, thumb, list) {
+    lbList = list && list.length ? list : [{ id: id, thumb: thumb }];
+    lbIdx = Math.max(0, lbList.map(function (x) { return x.id; }).indexOf(id));
+    var lb = $('#lightbox'); lb.hidden = false; replay(lb, 'opening'); showLb();
+  }
+  function showLb() {
+    var it = lbList[lbIdx], img = $('#lightboxImg'), mine = ++lbGen, many = lbList.length > 1;
+    img.src = safeThumb(it.thumb) || ''; replay(img, 'opening');
+    $('#lbPrev').hidden = !many || lbIdx === 0; $('#lbNext').hidden = !many || lbIdx === lbList.length - 1;
+    $('#lbCount').hidden = !many; $('#lbCount').textContent = (lbIdx + 1) + ' / ' + lbList.length;
+    fullPhoto(it.id).then(function (src) { if (mine === lbGen && src) img.src = src; })
+      .catch(function (e) { if (mine === lbGen) toast(errText(e), true); });
+  }
+  function stepLb(d) { var i = lbIdx + d; if ($('#lightbox').hidden || i < 0 || i >= lbList.length) return; lbIdx = i; showLb(); }
+  function closePhoto() { lbGen++; lbList = []; $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
+  $('#lightbox').addEventListener('click', function (e) {
+    if (lbSwiped) { lbSwiped = false; return; }
+    var nav = e.target.closest('.lb-nav'); if (nav) { stepLb(nav.id === 'lbPrev' ? -1 : 1); return; }
+    closePhoto();
+  });
+  $('#lightbox').addEventListener('touchstart', function (e) { lbX = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
+  $('#lightbox').addEventListener('touchend', function (e) {
+    if (lbX == null) return; var dx = e.changedTouches[0].clientX - lbX; lbX = null;
+    if (Math.abs(dx) > 40) { lbSwiped = true; setTimeout(function () { lbSwiped = false; }, 400); stepLb(dx < 0 ? 1 : -1); }
+  });
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-photo]'); if (!t) return;
+    var grp = t.closest('[data-gallery], .ph-strip'), nodes = grp ? $$('[data-photo]', grp) : [t];
+    var list = nodes.map(function (n) { var im = n.querySelector('img'); return { id: n.dataset.photo, thumb: im && im.getAttribute('src') }; });
+    openPhoto(t.dataset.photo, list[nodes.indexOf(t)].thumb, list);
+  });
 
   /* ---------- asset create / edit ---------- */
   $('#btnAddAsset').addEventListener('click', function () { openAssetForm(null); });
@@ -1174,7 +1251,13 @@
   }
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#overlay').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSheet(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#overlay').hidden) closeSheet(); });
+  document.addEventListener('keydown', function (e) {
+    if (!$('#lightbox').hidden) {
+      if (e.key === 'Escape') closePhoto(); else if (e.key === 'ArrowLeft') stepLb(-1); else if (e.key === 'ArrowRight') stepLb(1);
+      return;
+    }
+    if (e.key === 'Escape' && !$('#overlay').hidden) closeSheet();
+  });
 
   /* ---------- tap ripple on everything clickable ---------- */
   var TAP = '.btn,.chip,.nav-item,.stat,.side-card,.seg button,.fab,.icon-btn,.ph-t,.ph-add,.link-btn,.item .main';
