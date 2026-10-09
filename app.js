@@ -477,7 +477,15 @@
           var c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
           return { uri: c.toDataURL('image/jpeg', q), w: w, h: h };
         }
-        var full = draw(1600, 0.8), th = draw(240, 0.7); URL.revokeObjectURL(url);
+        // Stay inside the server limits (§14.5): full ≤ 1.5 MB decoded, thumb data URI ≤ 30,000 chars.
+        var full, q, side;
+        for (side = 1600; ; side = Math.round(side * 0.8)) {
+          for (q = 0.8; q >= 0.5; q -= 0.1) { full = draw(side, q); if ((full.uri.length - 23) * 0.75 <= 1400000) break; }
+          if ((full.uri.length - 23) * 0.75 <= 1400000 || side < 640) break;
+        }
+        var th; for (q = 0.7; q >= 0.3; q -= 0.1) { th = draw(240, q); if (th.uri.length <= 29000) break; }
+        URL.revokeObjectURL(url);
+        if ((full.uri.length - 23) * 0.75 > 1400000 || th.uri.length > 29000) { rej({ error: 'รูปใหญ่เกินไป ลองถ่ายใหม่' }); return; }
         res({ data: full.uri.split(',')[1], width: full.w, height: full.h, thumb: th.uri });
       };
       img.onerror = function () { URL.revokeObjectURL(url); rej({ error: 'อ่านไฟล์รูปไม่ได้' }); };
