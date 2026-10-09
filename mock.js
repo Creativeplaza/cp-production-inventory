@@ -87,7 +87,7 @@
     var db = load(); var u = sessUser(db, p.token);
     if (!u) return err(401, 'Unauthorized');
     if (api === 'me') return { success: true, user: { username: u.username, name: u.name, role: u.role }, perms: perms(u) };
-    if (api === 'bundle') return { success: true, assets: db.assets, loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
+    if (api === 'bundle') return { success: true, assets: db.assets.map(function (a) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; }); return Object.assign({}, a, { photoCount: ph.length, coverPhotoId: ph.length ? ph[0].photoId : '' }); }), loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
       approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }), me: { username: u.username, name: u.name, role: u.role, perms: perms(u) }, serverTime: Date.now() };
     if (api === 'getAsset') {
       var a = assetBy(db, p.id); if (!a) return err(404, 'NOT_FOUND');
@@ -101,6 +101,10 @@
       if (!has(u, 'report.view')) return err(403, 'FORBIDDEN');
       var all = db.loans.slice().reverse(), start = +(p.cursor || 0), lim = Math.min(+p.limit || 500, 1000);
       return { success: true, items: all.slice(start, start + lim).map(function (l) { return loanOut(db, l); }), hasMore: start + lim < all.length, nextCursor: start + lim < all.length ? String(start + lim) : '' };
+    }
+    if (api === 'assetCovers') {
+      var ids = p.assetIds; if (!Array.isArray(ids) || !ids.length || ids.length > 40) return err(400, 'VALIDATION');
+      return { success: true, covers: ids.map(function (id) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === id; }).sort(function (x, y) { return x.position - y.position; })[0]; return ph ? { assetId: id, photoId: ph.photoId, thumb: ph.thumb } : null; }).filter(Boolean) };
     }
     if (api === 'getPhoto') {
       var pp = db.photos.find(function (x) { return x.photoId === p.photoId; });
@@ -320,7 +324,7 @@
     return err(400, 'Unknown action');
   }
 
-  var READS = ['me', 'bundle', 'getAsset', 'listLoans', 'listUsers', 'listInvites', 'listRoles', 'getPhoto'];
+  var READS = ['me', 'bundle', 'getAsset', 'listLoans', 'listUsers', 'listInvites', 'listRoles', 'getPhoto', 'assetCovers'];
   window.CPI_MOCK = {
     post: function (b) { return new Promise(function (res) { setTimeout(function () { res(READS.indexOf(b.action) >= 0 ? get(b.action, b) : post(b)); }, 180); }); },
     reset: function () { localStorage.removeItem(KEY); }

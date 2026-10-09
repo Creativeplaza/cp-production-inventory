@@ -216,7 +216,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto();
+    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); coverCache = {}; coversUnsupported = false;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -360,13 +360,88 @@
         : '<span class="check"></span>';
       var meta = [a.sku, a.location].filter(Boolean).join(' · ');
       var who = a.holder ? '<div class="meta">' + esc(userName(a.holder)) + ' · ' + esc(a.project) + (a.dueDate ? ' · คืน <span class="' + (od ? 'overdue-txt' : '') + '">' + fmtDate(a.dueDate) + (od ? ' (เกิน ' + daysLate(a.dueDate) + ' วัน)' : '') + '</span>' : '') + '</div>' : '';
-      return '<li class="item' + (inCart ? ' in-cart' : '') + '">' + box +
+      return '<li class="item' + (inCart ? ' in-cart' : '') + '" data-asset="' + esc(a.assetId) + '">' + box + coverHtml(a) +
         '<div class="main" data-open="' + esc(a.assetId) + '"><div><span class="id">' + esc(a.assetId) + '</span> <span class="name">' + esc(a.name) + '</span></div>' +
         '<div class="meta">' + esc(meta) + '</div>' + who + '</div>' +
         '<div class="side">' + (od ? pill('overdue', 'ค้างคืน') : pill(a.status, ASSET_STATUS[a.status] || a.status)) + '</div></li>';
     }).join('') : '<li class="empty">' + (S.assets.length ? 'ไม่พบอุปกรณ์ตามตัวกรอง' : 'ยังไม่มีอุปกรณ์ในระบบ') + '</li>';
     if (printing) $('#printCount').textContent = 'เลือก ' + Object.keys(S.printSel).length + ' ชิ้น';
+    loadCovers(list);
   }
+
+  /* ---------- cover photos in the list + desktop hover card (contract §14.6) ---------- */
+  var coverCache = {};   // key → thumb data URI ('' = known to have none)
+  var coversUnsupported = false, coverBusy = false;
+  function coverKey(a) { return a.coverPhotoId ? 'p:' + a.coverPhotoId : 'a:' + a.assetId + ':' + (a.updatedAt || ''); }
+  function hasPhotos(a) { return !!a.coverPhotoId || a.photoCount > 0; }
+  function coverHtml(a) {
+    if (!hasPhotos(a)) return '';
+    var t = coverCache[coverKey(a)];
+    if (!t && coversUnsupported) return '<span class="cover icon" data-cover="' + esc(a.assetId) + '">' + ICON_CAM + '</span>';
+    return '<span class="cover' + (t ? '' : ' loading') + '" data-cover="' + esc(a.assetId) + '">' + (t ? '<img alt="" src="' + esc(t) + '">' : '') + '</span>';
+  }
+  function paintCover(a) {
+    var t = coverCache[coverKey(a)], el = $('#assetList [data-cover="' + (window.CSS && CSS.escape ? CSS.escape(a.assetId) : a.assetId) + '"]');
+    if (!el || !t) return; el.classList.remove('loading', 'icon'); el.innerHTML = '<img alt="" src="' + esc(t) + '">';
+    if (hoverAsset === a.assetId) paintHover();
+  }
+  // Fetch covers for the cards on screen in batches of ≤40; older backend → per-asset getAsset on hover only.
+  function loadCovers(list) {
+    if (coversUnsupported) return; // older backend: covers only via hover (don't queue slow getAsset calls)
+    if (coverBusy) return;
+    var need = list.filter(function (a) { return hasPhotos(a) && !(coverKey(a) in coverCache); }).slice(0, 40);
+    if (!need.length) return;
+    coverBusy = true; var g = S.gen;
+    apiGet('assetCovers', { assetIds: need.map(function (a) { return a.assetId; }) }).then(function (r) {
+      if (g !== S.gen) return;
+      var got = {}; (r.covers || []).forEach(function (c) { got[c.assetId] = safeThumb(c.thumb); });
+      need.forEach(function (a) { coverCache[coverKey(a)] = got[a.assetId] || ''; paintCover(a); });
+    }).catch(function (e) {
+      if (e && e.status === 400) coversUnsupported = true;
+    }).finally(function () { coverBusy = false; if (g !== S.gen) return; if (coversUnsupported) markNoBatch(); else loadCovers(filteredAssets()); });
+  }
+  // Older backend without assetCovers: stop the shimmer and show a static photo icon until the card is hovered.
+  function markNoBatch() { $$('#assetList .cover.loading').forEach(function (el) { el.classList.remove('loading'); el.classList.add('icon'); el.innerHTML = ICON_CAM; }); }
+  function coverViaDetail(a) {
+    var g = S.gen, k = coverKey(a); if (k in coverCache) return;
+    coverCache[k] = undefined;
+    apiGet('getAsset', { id: a.assetId }).then(function (r) {
+      if (g !== S.gen) return; var p = (r.photos || [])[0]; coverCache[k] = p ? safeThumb(p.thumb) : ''; paintCover(a);
+    }).catch(function () { delete coverCache[k]; });
+  }
+
+  var hoverAsset = null, hoverT = null, hoverMQ = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : { matches: false };
+  function paintHover() {
+    var a = assetById(hoverAsset), hc = $('#hoverCard'); if (!a) { hideHover(); return; }
+    var od = isOverdueAsset(a), t = coverCache[coverKey(a)];
+    var rows = [['SKU', a.sku], ['หมวด', catName(a.category)], ['รุ่น', a.model], ['Serial', a.serial], ['ที่เก็บ', a.location]];
+    if (a.holder) rows.push(['ผู้ถือ', userName(a.holder)], ['Project', a.project], ['กำหนดคืน', fmtDate(a.dueDate) + (od ? ' (เกิน ' + daysLate(a.dueDate) + ' วัน)' : '')]);
+    if (a.notes) rows.push(['หมายเหตุ', a.notes]);
+    hc.innerHTML = (hasPhotos(a) ? '<div class="hc-img' + (t ? '' : ' loading') + '">' + (t ? '<img alt="" src="' + esc(t) + '">' : '') + '</div>' : '<div class="hc-img none">ไม่มีรูป</div>') +
+      '<div class="hc-body"><div class="hc-head"><b>' + esc(a.assetId) + '</b>' + (od ? pill('overdue', 'ค้างคืน') : pill(a.status, ASSET_STATUS[a.status] || a.status)) + '</div>' +
+      '<div class="hc-name">' + esc(a.name) + '</div><dl>' + rows.filter(function (r) { return r[1]; }).map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('') + '</dl>' +
+      (a.photoCount > 1 ? '<p class="muted small">รูปทั้งหมด ' + a.photoCount + ' รูป · คลิกเพื่อดู</p>' : '<p class="muted small">คลิกเพื่อดูรายละเอียด</p>') + '</div>';
+  }
+  function placeHover(x, y) {
+    var hc = $('#hoverCard'), w = hc.offsetWidth, h = hc.offsetHeight, m = 16;
+    var left = x + m + w > innerWidth - 8 ? x - m - w : x + m, top = Math.min(Math.max(8, y - 40), innerHeight - h - 8);
+    hc.style.left = Math.max(8, left) + 'px'; hc.style.top = top + 'px';
+  }
+  function hideHover() { clearTimeout(hoverT); hoverAsset = null; var hc = $('#hoverCard'); hc.classList.remove('show'); hc.hidden = true; }
+  $('#assetList').addEventListener('mouseover', function (e) {
+    if (!hoverMQ.matches) return;
+    var li = e.target.closest('.item[data-asset]'); if (!li || li.dataset.asset === hoverAsset) return;
+    clearTimeout(hoverT); var id = li.dataset.asset, x = e.clientX, y = e.clientY;
+    hoverT = setTimeout(function () {
+      var a = assetById(id); if (!a) return;
+      hoverAsset = id; paintHover(); var hc = $('#hoverCard'); hc.hidden = false; placeHover(x, y); requestAnimationFrame(function () { hc.classList.add('show'); });
+      if (hasPhotos(a) && !(coverKey(a) in coverCache) && coversUnsupported) coverViaDetail(a);
+    }, 280);
+  });
+  $('#assetList').addEventListener('mousemove', function (e) { if (hoverAsset) placeHover(e.clientX, e.clientY); });
+  $('#assetList').addEventListener('mouseleave', hideHover);
+  $('#assetList').addEventListener('mouseout', function (e) { var li = e.target.closest('.item[data-asset]'); if (li && !li.contains(e.relatedTarget)) hideHover(); });
+  window.addEventListener('scroll', hideHover, { passive: true });
   $('#assetList').addEventListener('click', function (e) {
     var c = e.target.closest('[data-cart]'); if (c) { toggleCart(c.dataset.cart, c.checked); return; }
     var p = e.target.closest('[data-print]'); if (p) { if (p.checked) S.printSel[p.dataset.print] = 1; else delete S.printSel[p.dataset.print]; renderAssets(); return; }
