@@ -56,10 +56,13 @@
     SESSION_CAPACITY: 'มีผู้ใช้งานพร้อมกันเต็ม กรุณาลองใหม่ภายหลัง', NOT_CONFIGURED: 'ระบบยังไม่ได้ตั้งค่า', INTERNAL: 'ระบบขัดข้อง กรุณาลองใหม่' };
   ERR_TEXT.RATE_LIMIT = ERR_TEXT.RATE_LIMITED;
   ERR_TEXT.PHOTO_INVALID = 'รูปไม่ถูกต้องหรือหมดอายุ กรุณาอัปรูปใหม่'; ERR_TEXT.PAYLOAD_TOO_LARGE = 'ไฟล์รูปใหญ่เกินไป';
+  ERR_TEXT.CONFIRM_MISMATCH = 'รหัสยืนยันไม่ตรงกับรหัสอุปกรณ์'; ERR_TEXT.ASSET_IN_USE = 'อุปกรณ์นี้อยู่ในใบเบิกที่ยังไม่ปิด ลบไม่ได้';
+  ERR_TEXT.CATEGORY_IN_USE = 'ยังมีอุปกรณ์ในหมวดนี้ ย้ายหมวดหรือลบอุปกรณ์ก่อน';
   ERR_TEXT.INVITE_INVALID = 'รหัสเชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้ครบแล้ว'; ERR_TEXT.ROLE_IN_USE = 'ยังมีผู้ใช้หรือรหัสเชิญที่ใช้ role นี้อยู่';
   function errText(r) {
     var t = (r && ERR_TEXT[r.code]) || (r && r.error) || 'เกิดข้อผิดพลาด';
     if (r && r.assetIds && r.assetIds.length) t += ': ' + r.assetIds.join(', ');
+    if (r && r.code === 'CATEGORY_IN_USE' && r.count) t += ' (' + r.count + ' ชิ้น)';
     return t;
   }
 
@@ -398,7 +401,9 @@
 
   function filteredAssets() {
     var q = $('#q').value.trim().toLowerCase(), cat = $('#fCat').value, st = $('#fStatus').value, sf = S.statFilter;
+    var showRetired = st === 'retired' || sf === 'retired';
     return S.assets.filter(function (a) {
+      if (a.status === 'retired' && !showRetired) return false; // §17.1 hidden = retired
       if (cat && a.category !== cat) return false;
       if (st && a.status !== st) return false;
       if (sf === 'overdue' && !isOverdueAsset(a)) return false;
@@ -421,6 +426,8 @@
         '<div class="meta">' + esc(meta) + '</div>' + who + '</div>' +
         '<div class="side">' + (od ? pill('overdue', 'ค้างคืน') : pill(a.status, ASSET_STATUS[a.status] || a.status)) + '</div></li>';
     }).join('') : '<li class="empty">' + (S.assets.length ? 'ไม่พบอุปกรณ์ตามตัวกรอง' : 'ยังไม่มีอุปกรณ์ในระบบ') + '</li>';
+    var hid = $('#fStatus').value === 'retired' || S.statFilter === 'retired' ? 0 : S.assets.filter(function (a) { return a.status === 'retired'; }).length;
+    if (hid && !printing) $('#assetList').insertAdjacentHTML('beforeend', '<li class="hidden-note"><button type="button" class="link-btn" data-show-retired>ซ่อนอยู่ ' + hid + ' ชิ้น (เลิกใช้งาน) — ดู</button></li>');
     if (printing) $('#printCount').textContent = 'เลือก ' + Object.keys(S.printSel).length + ' ชิ้น';
     flipPlay(snap); loadCovers(list);
   }
@@ -507,6 +514,7 @@
   $('#assetList').addEventListener('click', function (e) {
     var c = e.target.closest('[data-cart]'); if (c) { toggleCart(c.dataset.cart, c.checked); return; }
     var p = e.target.closest('[data-print]'); if (p) { if (p.checked) S.printSel[p.dataset.print] = 1; else delete S.printSel[p.dataset.print]; renderAssets(); return; }
+    if (e.target.closest('[data-show-retired]')) { S.statFilter = ''; $('#fStatus').value = 'retired'; renderStats(); renderAssets(); return; }
     var o = e.target.closest('[data-open]') || e.target.closest('[data-cover]'); if (o) openAsset(o.dataset.open || o.dataset.cover);
   });
 
@@ -571,7 +579,13 @@
       var act = [];
       if (a.status === 'available' && P().loanRequest) act.push('<button class="btn primary" data-act="cart">' + (S.cart.indexOf(a.assetId) >= 0 ? 'อยู่ในตะกร้าแล้ว' : '+ ใส่ตะกร้าเบิก') + '</button>');
       if (loan) act.push('<button class="btn" data-act="loan">ดูใบเบิก ' + esc(loan.loanId) + '</button>');
-      if (P().assetManage) act.push('<button class="btn" data-act="edit">แก้ไข</button>', '<button class="btn" data-act="print">พิมพ์ฉลาก</button>');
+      if (P().assetManage) {
+        act.push('<button class="btn" data-act="edit">แก้ไข</button>', '<button class="btn" data-act="print">พิมพ์ฉลาก</button>');
+        var inUse = !!a.currentLoanId || a.status === 'reserved' || a.status === 'checked_out';
+        if (a.status === 'retired') act.push('<button class="btn" data-act="restore">กู้คืน</button>');
+        else if (!inUse) act.push('<button class="btn" data-act="hide">ซ่อน (เลิกใช้งาน)</button>');
+        if (!inUse) act.push('<button class="btn danger" data-act="delete">ลบถาวร</button>');
+      }
       var hist = !loans ? '<p class="muted small">กำลังโหลดประวัติ…</p>' : loans.length ? '<ul class="timeline">' + loans.slice(0, 20).map(function (l) {
         var it = (l.items || []).find(function (i) { return i.assetId === a.assetId; }) || {};
         var end = it.itemStatus === 'lost' ? ' · แจ้งสูญหาย ' + fmtDT(it.returnedAt) : ' · คืน ' + fmtDT(it.returnedAt);
@@ -594,6 +608,17 @@
         if (b.dataset.act === 'loan') openLoan(loan.loanId);
         if (b.dataset.act === 'edit') openAssetForm(a, photos);
         if (b.dataset.act === 'print') printLabels([a.assetId]);
+        if (b.dataset.act === 'hide') {
+          if (!confirm('ซ่อน ' + a.assetId + ' ' + a.name + '?\nเปลี่ยนเป็น "เลิกใช้งาน" — หายจากรายการและเบิกไม่ได้ ประวัติยังอยู่ กู้คืนได้ภายหลัง')) return;
+          assetMutation(b, 'asset_update', { assetId: a.assetId, status: 'retired' }, 'ซ่อน ' + a.assetId + ' แล้ว', mg);
+        }
+        if (b.dataset.act === 'restore') assetMutation(b, 'asset_update', { assetId: a.assetId, status: 'available' }, 'กู้คืน ' + a.assetId + ' แล้ว', mg);
+        if (b.dataset.act === 'delete') {
+          var c = prompt('ลบ ' + a.assetId + ' ' + a.name + ' ถาวร — ย้อนกลับไม่ได้\nประวัติการเบิกเดิมยังอยู่ แต่อุปกรณ์และรูปจะหายจากระบบ\n\nพิมพ์รหัส ' + a.assetId + ' เพื่อยืนยัน');
+          if (c === null) return;
+          if (c.trim().toUpperCase() !== a.assetId) { toast('รหัสยืนยันไม่ตรง — ยังไม่ได้ลบ', true); return; }
+          assetMutation(b, 'asset_delete', { assetId: a.assetId, confirm: a.assetId }, 'ลบ ' + a.assetId + ' ถาวรแล้ว', mg);
+        }
       };
       initGallery($('#sheetBody .gallery[data-gallery]'), mg);
     }
@@ -674,6 +699,16 @@
       var x = e.target.closest('.ph-x'); if (!x) return; e.preventDefault(); items.splice(+x.dataset.k, 1); render();
     });
     render(); return ctl;
+  }
+  // Hide / restore / delete from the asset detail: one request, then close this detail (if still open) and reload.
+  function assetMutation(btn, action, body, okMsg, mg) {
+    var g = S.gen; btn.disabled = true;
+    return apiPost(action, body).then(function () {
+      if (g !== S.gen) return;
+      toast(okMsg); if (mg === S.modal) closeSheet();
+      S.cart = S.cart.filter(function (id) { return id !== body.assetId; });
+      return reload();
+    }).catch(function (r) { if (g === S.gen) { btn.disabled = false; toast(errText(r), true); } });
   }
   function thumbStrip(photos) {
     var ok = (photos || []).filter(function (p) { return safeThumb(p.thumb); });
@@ -878,7 +913,7 @@
   function loanCard(l) {
     var od = loanOverdue(l);
     var items = (l.items || []).map(function (i) {
-      return '<li><span><b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</span>' + pill(i.itemStatus === 'checked_out' && od ? 'overdue' : i.itemStatus, ITEM_STATUS[i.itemStatus] || i.itemStatus) + '</li>';
+      return '<li><span><b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + (i.assetDeleted ? ' <span class="muted small">(ลบแล้ว)</span>' : '') + '</span>' + pill(i.itemStatus === 'checked_out' && od ? 'overdue' : i.itemStatus, ITEM_STATUS[i.itemStatus] || i.itemStatus) + '</li>';
     }).join('');
     var acts = loanActions(l).map(function (x) { return '<button class="btn sm ' + x[2] + '" data-la="' + x[0] + '" data-id="' + esc(l.loanId) + '">' + x[1] + '</button>'; }).join('');
     return '<li class="item" data-loan="' + esc(l.loanId) + '"><div class="main" style="cursor:default">' +
@@ -1104,7 +1139,8 @@
     $('#catList').innerHTML = cats().map(function (c) {
       return '<li class="item" data-cat="' + esc(c.code) + '"><div class="main" style="cursor:default"><div><span class="id">' + esc(c.code) + '</span> ' + esc(c.name) + '</div>' +
         '<div class="meta">อุปกรณ์ ' + (count[c.code] || 0) + ' ชิ้น</div></div><div class="side">' + (c.active ? pill('available', 'ใช้งาน') : pill('retired', 'ปิดใช้')) +
-        '<div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-cat-edit>แก้ชื่อ</button><button class="btn sm' + (c.active ? ' danger' : '') + '" data-cat-toggle>' + (c.active ? 'ปิดใช้' : 'เปิดใช้') + '</button></div></div></li>';
+        '<div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-cat-edit>แก้ชื่อ</button><button class="btn sm" data-cat-toggle>' + (c.active ? 'ปิดใช้' : 'เปิดใช้') + '</button>' +
+        '<button class="btn sm danger" data-cat-del' + (count[c.code] ? ' aria-disabled="true" title="ยังมีอุปกรณ์ในหมวดนี้"' : '') + '>ลบ</button></div></div></li>';
     }).join('');
   }
   function saveCategory(code, name, active, okMsg) {
@@ -1115,6 +1151,16 @@
     if (e.target.closest('[data-cat-edit]')) {
       var n = prompt('ชื่อหมวด ' + c.code, c.name); if (n === null) return; n = n.trim(); if (!n) { toast('ต้องระบุชื่อหมวด', true); return; }
       saveCategory(c.code, n.slice(0, 40), c.active, 'บันทึกชื่อหมวดแล้ว');
+    }
+    var del = e.target.closest('[data-cat-del]');
+    if (del) {
+      var n = S.assets.filter(function (a) { return a.category === c.code; }).length;
+      if (n) { toast('หมวด ' + c.code + ' ยังมีอุปกรณ์ ' + n + ' ชิ้น (รวมที่ซ่อนไว้) — ย้ายหมวดหรือลบอุปกรณ์ก่อน', true); return; }
+      if (!confirm('ลบหมวด ' + c.code + ' · ' + c.name + '?')) return;
+      var g = S.gen; del.disabled = true;
+      apiPost('category_delete', { code: c.code }).then(function () { if (g !== S.gen) return; toast('ลบหมวด ' + c.code + ' แล้ว'); return reload(); })
+        .catch(function (r) { if (g === S.gen) { del.disabled = false; toast(errText(r), true); } });
+      return;
     }
     if (e.target.closest('[data-cat-toggle]')) {
       if (c.active && !confirm('ปิดใช้หมวด ' + c.code + '? อุปกรณ์เดิมยังอยู่ แต่เพิ่มอุปกรณ์ใหม่ในหมวดนี้ไม่ได้')) return;

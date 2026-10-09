@@ -62,7 +62,8 @@
     var o = JSON.parse(JSON.stringify(l));
     o.requesterName = nameOf(db, l.requester); o.approverName = nameOf(db, l.approver);
     o.items.forEach(function (it) {
-      var a = assetBy(db, it.assetId) || {}; it.assetName = a.name || ''; it.sku = a.sku || '';
+      var a = assetBy(db, it.assetId), del = !a && (db.deletedAssets || []).find(function (x) { return x.assetId === it.assetId; });
+      a = a || del || {}; it.assetName = a.name || ''; it.sku = a.sku || ''; it.assetDeleted = !!del;
       it.photos = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'return' && x.loanId === l.loanId && x.assetId === it.assetId; }).map(function (x) { return { photoId: x.photoId, thumb: x.thumb }; });
     });
     return o;
@@ -179,6 +180,28 @@
         if (cat) { cat.name = b.name.trim(); cat.active = b.active !== false; } else db.categories.push({ code: b.code, name: b.name.trim(), active: b.active !== false });
         ev(db, u.username, 'category_upsert', '', '', '', '', b.code, rid); save(db); return { success: true };
       }
+      case 'asset_delete': {
+        if (!P.assetManage) return err(403, 'FORBIDDEN');
+        var da = assetBy(db, b.assetId); if (!da) return err(404, 'NOT_FOUND');
+        if (b.confirm !== da.assetId) return err(400, 'CONFIRM_MISMATCH');
+        var busy = !!da.currentLoanId || da.status === 'reserved' || da.status === 'checked_out' || db.loans.some(function (l) {
+          return ['pending', 'approved', 'checked_out', 'partially_returned'].indexOf(l.status) >= 0 && l.items.some(function (i) { return i.assetId === da.assetId && (i.itemStatus === 'requested' || i.itemStatus === 'checked_out'); });
+        });
+        if (busy) return err(409, 'ASSET_IN_USE');
+        db.deletedAssets = db.deletedAssets || [];
+        db.deletedAssets.push({ assetId: da.assetId, sku: da.sku, name: da.name, category: da.category, model: da.model, serial: da.serial, deletedAt: now, deletedBy: u.username });
+        db.assets = db.assets.filter(function (x) { return x !== da; });
+        db.photos.forEach(function (x) { if (x.kind === 'asset' && x.assetId === da.assetId && x.status === 'attached') { x.status = 'detached'; x.detachedAt = now; } });
+        ev(db, u.username, 'asset_delete', '', da.assetId, da.status, '', '', rid); save(db); return { success: true };
+      }
+      case 'category_delete': {
+        if (!P.assetManage) return err(403, 'FORBIDDEN');
+        if (!db.categories.some(function (x) { return x.code === b.code; })) return err(404, 'NOT_FOUND');
+        var used = db.assets.filter(function (x) { return x.category === b.code; }).length;
+        if (used) return err(409, 'CATEGORY_IN_USE', { count: used });
+        db.categories = db.categories.filter(function (x) { return x.code !== b.code; });
+        ev(db, u.username, 'category_delete', '', '', '', '', b.code, rid); save(db); return { success: true };
+      }
       case 'asset_create': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
         if (!db.categories.some(function (x) { return x.code === b.category && x.active; })) return err(400, 'หมวดนี้ปิดใช้หรือไม่มีอยู่');
@@ -186,7 +209,8 @@
         if (!/^[A-Z]{2,4}$/.test(b.category || '')) return err(400, 'หมวดไม่ถูกต้อง');
         if (!/^[A-Z0-9-]{2,24}$/.test(b.sku || '')) return err(400, 'SKU ไม่ถูกต้อง');
         if (!b.name) return err(400, 'ต้องระบุชื่อ');
-        var n = db.assets.filter(function (x) { return x.category === b.category; }).length + 1;
+        // §17.2: next number = max over live + deleted assets of this prefix (never reuse an AssetID)
+        var n = db.assets.concat(db.deletedAssets || []).reduce(function (m, x) { var k = x.assetId.split('-'); return k[0] === b.category ? Math.max(m, +k[1] || 0) : m; }, 0) + 1;
         var id = b.category + '-' + String(n).padStart(4, '0');
         var na = { assetId: id, sku: b.sku, name: b.name, category: b.category, model: b.model || '', serial: b.serial || '', location: b.location || '',
           status: 'available', currentLoanId: '', holder: '', project: '', dueDate: '', notes: b.notes || '', createdAt: now, updatedAt: now };
