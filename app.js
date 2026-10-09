@@ -216,7 +216,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); coverCache = {}; coversUnsupported = false;
+    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -282,7 +282,7 @@
     b.addEventListener('click', function () { switchTab(b.dataset.tab); closeDrawer(); });
   });
   function switchTab(t) {
-    S.tab = t;
+    S.tab = t; hideHover();
     $$('.side-nav [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x.dataset.tab === t)); });
     ['assets', 'loans', 'report', 'users', 'settings'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
     $('#pageTitle').textContent = TAB_TITLES[t] || '';
@@ -371,7 +371,7 @@
 
   /* ---------- cover photos in the list + desktop hover card (contract §14.6) ---------- */
   var coverCache = {};   // key → thumb data URI ('' = known to have none)
-  var coversUnsupported = false, coverBusy = false;
+  var coversUnsupported = false, coverBusy = false, coverAttempt = 0, coverRetryAt = 0;
   function coverKey(a) { return a.coverPhotoId ? 'p:' + a.coverPhotoId : 'a:' + a.assetId + ':' + (a.updatedAt || ''); }
   function hasPhotos(a) { return !!a.coverPhotoId || a.photoCount > 0; }
   function coverHtml(a) {
@@ -386,19 +386,25 @@
     if (hoverAsset === a.assetId) paintHover();
   }
   // Fetch covers for the cards on screen in batches of ≤40; older backend → per-asset getAsset on hover only.
+  // Batches of ≤12 visible cards. One request in flight; each attempt owns the busy flag (a logout bumps
+  // coverAttempt, so a dropped/never-settling request can't keep covers blocked). Failure → back off 60 s.
   function loadCovers(list) {
     if (coversUnsupported) return; // older backend: covers only via hover (don't queue slow getAsset calls)
-    if (coverBusy) return;
-    var need = list.filter(function (a) { return hasPhotos(a) && !(coverKey(a) in coverCache); }).slice(0, 40);
+    if (coverBusy || Date.now() < coverRetryAt) return;
+    var need = list.filter(function (a) { return hasPhotos(a) && !(coverKey(a) in coverCache); }).slice(0, 12);
     if (!need.length) return;
-    coverBusy = true; var g = S.gen;
+    var mine = ++coverAttempt, g = S.gen; coverBusy = true;
     apiGet('assetCovers', { assetIds: need.map(function (a) { return a.assetId; }) }).then(function (r) {
-      if (g !== S.gen) return;
+      if (mine !== coverAttempt || g !== S.gen) return;
       var got = {}; (r.covers || []).forEach(function (c) { got[c.assetId] = safeThumb(c.thumb); });
       need.forEach(function (a) { coverCache[coverKey(a)] = got[a.assetId] || ''; paintCover(a); });
+      coverBusy = false; loadCovers(filteredAssets()); // next batch only after a success
     }).catch(function (e) {
-      if (e && e.status === 400) coversUnsupported = true;
-    }).finally(function () { coverBusy = false; if (g !== S.gen) return; if (coversUnsupported) markNoBatch(); else loadCovers(filteredAssets()); });
+      if (mine !== coverAttempt || g !== S.gen) return;
+      coverBusy = false;
+      if (e && e.status === 400) { coversUnsupported = true; markNoBatch(); return; }
+      coverRetryAt = Date.now() + 60000; // network / server error: no immediate retry loop
+    });
   }
   // Older backend without assetCovers: stop the shimmer and show a static photo icon until the card is hovered.
   function markNoBatch() { $$('#assetList .cover.loading').forEach(function (el) { el.classList.remove('loading'); el.classList.add('icon'); el.innerHTML = ICON_CAM; }); }
@@ -445,7 +451,7 @@
   $('#assetList').addEventListener('click', function (e) {
     var c = e.target.closest('[data-cart]'); if (c) { toggleCart(c.dataset.cart, c.checked); return; }
     var p = e.target.closest('[data-print]'); if (p) { if (p.checked) S.printSel[p.dataset.print] = 1; else delete S.printSel[p.dataset.print]; renderAssets(); return; }
-    var o = e.target.closest('[data-open]'); if (o) openAsset(o.dataset.open);
+    var o = e.target.closest('[data-open]') || e.target.closest('[data-cover]'); if (o) openAsset(o.dataset.open || o.dataset.cover);
   });
 
   /* ---------- cart ---------- */
@@ -894,6 +900,19 @@
     if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
+  // Chrome/Edge desktop: real "Save as" dialog that remembers the chosen folder (id 'cpi-reports'), so the
+  // user can keep a dedicated reports folder. Elsewhere (Safari, mobile): normal download.
+  function downloadCsv(blob, filename) {
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  function saveCsv(csv, filename) {
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    if (!window.showSaveFilePicker) { downloadCsv(blob, filename); return; }
+    window.showSaveFilePicker({ id: 'cpi-reports', startIn: 'downloads', suggestedName: filename, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] })
+      .then(function (h) { return h.createWritable().then(function (w) { return w.write(blob).then(function () { return w.close(); }); }).then(function () { toast('บันทึก ' + h.name + ' แล้ว'); }); })
+      .catch(function (e) { if (e && e.name === 'AbortError') return; downloadCsv(blob, filename); });
+  }
   $('#btnCsv').addEventListener('click', function () {
     var btn = this;
     if (rangeBad()) { toast('ช่วงวันที่ไม่ถูกต้อง', true); return; }
@@ -910,9 +929,9 @@
     var r = reportRows();
     var csv = '﻿' + [r.head].concat(r.rows).map(function (row) { return row.map(csvCell).join(','); }).join('\r\n');
     var name = { register: 'ทะเบียนทรัพย์สิน', history: 'ประวัติเบิกคืน', overdue: 'ค้างคืน' }[S.report];
-    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'CP-ProductionInventory-' + name + '-' + today() + '.csv'; document.body.appendChild(a); a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    // Unique name per export (Bangkok date + time to the second) so repeated exports never overwrite each other.
+    var stamp = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '');
+    saveCsv(csv, 'CP-ProductionInventory-' + name + '-' + stamp + '.csv');
   });
 
   /* ---------- settings: categories (contract §15) ---------- */
@@ -1121,7 +1140,7 @@
   /* ---------- sheet ---------- */
   var onSheetClose = null;
   function openSheet(title, html, onClose) {
-    S.modal++;
+    S.modal++; hideHover();
     if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
     $('#sheetTitle').textContent = title; $('#sheetBody').innerHTML = html; $('#sheetBody').onclick = null;
     clearTimeout(sheetHideT); $('#overlay').classList.remove('closing'); $('#overlay').inert = false;
