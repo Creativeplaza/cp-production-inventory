@@ -216,7 +216,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; closeDrawer();
+    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto();
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -498,15 +498,21 @@
   }
   // A photo picker bound to a container. existing = [{photoId, thumb}] (asset edit). Returns a controller.
   function photoPicker(el, kind, opts) {
+    // Bound to the session + modal it was opened in: async work (shrink/upload) that finishes after a
+    // logout, re-login or a different sheet must never start a request or touch the DOM.
+    var gen = S.gen, mg = S.modal;
+    function alive(it) { return gen === S.gen && mg === S.modal && (!it || items.indexOf(it) >= 0); }
     var items = (opts.existing || []).map(function (p) { return { photoId: p.photoId, thumb: safeThumb(p.thumb), state: 'done' }; });
     var ctl = {
       ids: function () { return items.filter(function (i) { return i.state === 'done'; }).map(function (i) { return i.photoId; }); },
       shrunk: function () { return items.filter(function (i) { return i.state === 'done' && i.src; }).map(function (i) { return i.src; }); },
       busy: function () { return items.some(function (i) { return i.state === 'up'; }); },
       ok: function () { return !ctl.busy() && ctl.ids().length >= opts.min; },
+      alive: function () { return alive(); },
       onchange: null
     };
     function render() {
+      if (!alive()) return;
       el.innerHTML = '<div class="ph-grid">' + items.map(function (it, k) {
         return '<div class="ph' + (it.state === 'up' ? ' up' : it.state === 'err' ? ' err' : '') + '">' + (it.thumb ? '<img alt="" src="' + esc(it.thumb) + '">' : '') +
           (it.state === 'up' ? '<span class="ph-spin"></span>' : '') + (it.state === 'err' ? '<span class="ph-msg">อัปไม่สำเร็จ</span>' : '') +
@@ -519,9 +525,10 @@
     function add(files) {
       files.slice(0, opts.max - items.length).forEach(function (f) {
         var it = { state: 'up', thumb: '' }; items.push(it);
-        shrink(f).then(function (s) { it.thumb = s.thumb; it.src = s; render(); return uploadShrunk(kind, s); })
-          .then(function (p) { it.photoId = p.photoId; it.state = 'done'; render(); })
-          .catch(function (e) { it.state = 'err'; render(); toast(errText(e), true); });
+        var stop = {};
+        shrink(f).then(function (s) { if (!alive(it)) throw stop; it.thumb = s.thumb; it.src = s; render(); return uploadShrunk(kind, s); })
+          .then(function (p) { if (!alive(it)) return; it.photoId = p.photoId; it.state = 'done'; render(); })
+          .catch(function (e) { if (e === stop || !alive(it)) return; it.state = 'err'; render(); toast(errText(e), true); });
       });
       render();
     }
@@ -535,15 +542,17 @@
     return ok.length ? '<div class="ph-strip">' + ok.map(function (p) { return '<button type="button" class="ph-t" data-photo="' + esc(p.photoId) + '"><img alt="" src="' + esc(safeThumb(p.thumb)) + '"></button>'; }).join('') + '</div>' : '';
   }
   // Full photo in a lightbox (separate from the sheet so the detail stays open).
+  // Each open/close/logout bumps lbGen; a full-photo response only lands if its own opening is still current.
+  var lbGen = 0;
   function openPhoto(id, thumb) {
-    var lb = $('#lightbox'), img = $('#lightboxImg'); img.src = safeThumb(thumb) || ''; lb.hidden = false; replay(lb, 'opening');
-    var g = S.gen;
+    var lb = $('#lightbox'), img = $('#lightboxImg'), mine = ++lbGen;
+    img.src = safeThumb(thumb) || ''; lb.hidden = false; replay(lb, 'opening');
     apiGet('getPhoto', { photoId: id }).then(function (r) {
-      var p = r.photo || {}; if (g !== S.gen || lb.hidden) return;
+      var p = r.photo || {}; if (mine !== lbGen) return;
       if (/^image\/(jpeg|png|webp)$/.test(p.mime) && /^[A-Za-z0-9+\/=]+$/.test(p.data || '')) img.src = 'data:' + p.mime + ';base64,' + p.data;
-    }).catch(function (e) { if (!lb.hidden) toast(errText(e), true); });
+    }).catch(function (e) { if (mine === lbGen) toast(errText(e), true); });
   }
-  function closePhoto() { $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
+  function closePhoto() { lbGen++; $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
   $('#lightbox').addEventListener('click', closePhoto);
   document.addEventListener('click', function (e) { var t = e.target.closest('[data-photo]'); if (t) { var im = t.querySelector('img'); openPhoto(t.dataset.photo, im && im.getAttribute('src')); } });
 
@@ -567,26 +576,31 @@
       (edit ? '' : '<p class="muted small">จำนวนหลายชิ้น = รุ่นเดียวกัน SKU เดียวกัน ระบบออกรหัส + QR แยกให้ทีละชิ้น (Serial ใส่ทีหลังได้)</p>') +
       '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่ม') + '</button></form>');
     var f = $('#assetForm'), submit = f.querySelector('[type=submit]');
-    var pick = photoPicker($('#assetPhotos'), 'asset', { min: 1, max: 5, existing: photos || [] });
+    // Pre-v0.6 assets without photos may be edited without adding one (photoIds omitted = keep, §14.5 S3-1).
+    var legacy = edit && !(photos || []).length;
+    var pick = photoPicker($('#assetPhotos'), 'asset', { min: legacy ? 0 : 1, max: 5, existing: photos || [] });
     pick.onchange = function () { submit.disabled = !pick.ok(); }; pick.onchange();
     f.sku.addEventListener('input', function () { f.sku.value = f.sku.value.toUpperCase(); });
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var btn = submit; if (!pick.ok()) { toast('ต้องมีรูปอุปกรณ์อย่างน้อย 1 รูป', true); return; } btn.disabled = true;
+      var gen = S.gen, mg = S.modal, stop = {}; function alive() { return gen === S.gen && mg === S.modal; }
       var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), photoIds: pick.ids() };
       var p;
+      if (edit && !body.photoIds.length) delete body.photoIds; // legacy asset with no photos: keep as-is
       if (edit) { body.assetId = a.assetId; if (f.status && f.status.value !== a.status) body.status = f.status.value; p = apiPost('asset_update', body); }
       else {
         body.category = f.category.value; var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
         p = (function next(i) {
           if (i >= n) return Promise.resolve();
+          if (!alive()) return Promise.reject(stop); // never start uploads/creates for an old session or closed form
           // A photo belongs to one asset (§14.2) → for extra pieces of the same model, upload the same shots again.
           var ids = i === 0 ? Promise.resolve(body.photoIds) : Promise.all(pick.shrunk().map(function (s) { return uploadShrunk('asset', s).then(function (p) { return p.photoId; }); }));
-          return ids.then(function (photoIds) { return apiPost('asset_create', Object.assign({}, body, { serial: i === 0 ? body.serial : '', photoIds: photoIds })); })
+          return ids.then(function (photoIds) { if (!alive()) throw stop; return apiPost('asset_create', Object.assign({}, body, { serial: i === 0 ? body.serial : '', photoIds: photoIds })); })
             .then(function (r) { made.push(r.asset.assetId); return next(i + 1); });
-        })(0).then(function () { toast('เพิ่มแล้ว ' + made.join(', ')); });
+        })(0).then(function () { if (alive()) toast('เพิ่มแล้ว ' + made.join(', ')); });
       }
-      p.then(function () { if (edit) toast('บันทึกแล้ว'); closeSheet(); return reload(); })
-        .catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = !pick.ok(); });
+      p.then(function () { if (!alive()) return; if (edit) toast('บันทึกแล้ว'); closeSheet(); return reload(); })
+        .catch(function (r) { if (r === stop || !alive()) return; toast(errText(r), true); reload(); }).finally(function () { if (alive()) btn.disabled = !pick.ok(); });
     });
   }
 
