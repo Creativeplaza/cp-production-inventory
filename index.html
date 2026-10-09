@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#d7d8dc">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>Production Inventory · Creative Plaza</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-512.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Urbanist:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- Login -->
+<section id="login" class="login" hidden>
+  <form class="login-card" id="loginForm" method="post" autocomplete="on">
+    <picture class="login-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
+    <h1>Production Inventory</h1>
+    <p class="muted">ระบบเบิกทรัพย์สิน</p>
+    <label>ชื่อผู้ใช้<input name="username" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
+    <div class="pin-field">
+      <span class="pin-label" id="pinLbl">PIN 4 หลัก</span>
+      <div class="pin-boxes" data-pin="pin" role="group" aria-labelledby="pinLbl">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="PIN 4 หลัก หลักที่ 1">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="PIN 4 หลัก หลักที่ 2">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="PIN 4 หลัก หลักที่ 3">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="PIN 4 หลัก หลักที่ 4">
+      </div>
+      <input type="hidden" name="pin">
+    </div>
+    <p class="form-error" id="loginErr" role="alert"></p>
+    <button class="btn primary block" type="submit">เข้าสู่ระบบ</button>
+    <p class="muted small" id="mockHint" hidden>โหมดทดสอบ (mock): admin / appr / store / req · PIN 1234</p>
+    <button type="button" class="link-btn" id="toRegister">มีรหัสเชิญ? <b>สมัครใช้งาน</b></button>
+  </form>
+  <form class="login-card" id="regForm" method="post" autocomplete="off" hidden>
+    <picture class="login-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
+    <h1>สมัครใช้งาน</h1>
+    <p class="muted">ใช้รหัสเชิญจากผู้ดูแลระบบ</p>
+    <label>รหัสเชิญ<input name="invite" class="code-input" maxlength="12" autocapitalize="characters" spellcheck="false" required placeholder="เช่น ABCD2345"></label>
+    <label>ชื่อผู้ใช้ (ใช้ตอนเข้าสู่ระบบ)<input name="username" autocomplete="username" required autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9._\-]{3,24}" placeholder="a-z 0-9 . _ - (3–24 ตัว)"></label>
+    <label>ชื่อที่แสดง<input name="name" autocomplete="name" required maxlength="60" placeholder="เช่น สมชาย ใจดี"></label>
+    <div class="pin-field">
+      <span class="pin-label" id="regPinLbl">ตั้ง PIN 4 หลัก</span>
+      <div class="pin-boxes" data-pin="pin" role="group" aria-labelledby="regPinLbl">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" aria-label="ตั้ง PIN 4 หลัก หลักที่ 1">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ตั้ง PIN 4 หลัก หลักที่ 2">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ตั้ง PIN 4 หลัก หลักที่ 3">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ตั้ง PIN 4 หลัก หลักที่ 4">
+      </div>
+      <input type="hidden" name="pin">
+    </div>
+    <div class="pin-field">
+      <span class="pin-label" id="regPin2Lbl">ยืนยัน PIN</span>
+      <div class="pin-boxes" data-pin="pin2" role="group" aria-labelledby="regPin2Lbl">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ยืนยัน PIN หลักที่ 1">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ยืนยัน PIN หลักที่ 2">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ยืนยัน PIN หลักที่ 3">
+        <input class="pin-box" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="ยืนยัน PIN หลักที่ 4">
+      </div>
+      <input type="hidden" name="pin2">
+    </div>
+    <p class="form-error" id="regErr" role="alert"></p>
+    <button class="btn primary block" type="submit">สมัครและเข้าใช้งาน</button>
+    <button type="button" class="link-btn" id="toLogin">มีบัญชีแล้ว? <b>เข้าสู่ระบบ</b></button>
+  </form>
+</section>
+
+<!-- App -->
+<div id="app" class="shell" hidden>
+  <aside class="sidebar" id="side" aria-label="เมนูหลัก">
+    <div class="side-head">
+      <picture class="side-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
+      <button class="side-toggle" id="btnCollapse" aria-label="ย่อ/ขยายเมนู" title="ย่อ/ขยายเมนู"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg></button>
+    </div>
+    <p class="side-app">Production Inventory</p>
+    <nav class="side-nav" role="tablist" aria-orientation="vertical">
+      <button class="nav-item" role="tab" data-tab="assets" aria-selected="true" title="อุปกรณ์"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></span><span class="nav-txt">อุปกรณ์</span></button>
+      <button class="nav-item" role="tab" data-tab="loans" aria-selected="false" title="ใบเบิก"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 3.5h6v3H9z"/><path d="M9 11h6M9 15h4"/></svg><span class="dot-badge" id="loanBadge" hidden></span></span><span class="nav-txt">ใบเบิก</span></button>
+      <button class="nav-item" role="tab" data-tab="report" aria-selected="false" title="รายงาน" id="navReport"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 3.5v17h17"/><path d="M7.5 15l4-4.5 3 3 5-6"/></svg></span><span class="nav-txt">รายงาน</span></button>
+      <button class="nav-item" role="tab" data-tab="users" aria-selected="false" title="ผู้ใช้" id="navUsers" hidden><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 010 7M18.5 14.8c1.6.8 2.7 2.6 3 5.2"/></svg></span><span class="nav-txt">ผู้ใช้</span></button>
+    </nav>
+    <div class="side-foot">
+      <button class="side-card" id="sideCard" type="button"></button>
+      <div class="side-user" title=""><span class="avatar" id="avatar"></span><span class="nav-txt"><b id="who"></b><small id="whoRole"></small></span></div>
+      <button class="nav-item" id="btnLogout" title="ออกจากระบบ"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/></svg></span><span class="nav-txt">ออกจากระบบ</span></button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="content">
+    <header class="mbar">
+      <button class="icon-btn" id="btnMenu" aria-label="เปิดเมนู"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+      <picture class="mbar-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
+    </header>
+    <h1 class="page-title" id="pageTitle">อุปกรณ์</h1>
+  <main>
+    <!-- Assets tab -->
+    <section id="tab-assets" class="tab">
+      <div class="stats" id="stats"></div>
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="ค้นหา รหัส / ชื่อ / SKU / ผู้ถือ…" aria-label="ค้นหา">
+        <select id="fCat" aria-label="หมวด"><option value="">ทุกหมวด</option></select>
+        <select id="fStatus" aria-label="สถานะ"><option value="">ทุกสถานะ</option></select>
+      </div>
+      <div class="toolbar end" id="assetAdminBar" hidden>
+        <button class="btn" id="btnPrintMode">🏷️ พิมพ์ฉลาก QR</button>
+        <button class="btn primary" id="btnAddAsset">+ เพิ่มอุปกรณ์</button>
+      </div>
+      <div class="print-bar" id="printBar" hidden>
+        <span id="printCount">เลือก 0 ชิ้น</span>
+        <button class="btn sm" id="btnPrintAll">เลือกทั้งหมด</button>
+        <button class="btn sm primary" id="btnPrintGo">พิมพ์</button>
+        <button class="btn sm ghost" id="btnPrintCancel">ยกเลิก</button>
+      </div>
+      <ul class="list" id="assetList"></ul>
+    </section>
+
+    <!-- Loans tab -->
+    <section id="tab-loans" class="tab" hidden>
+      <div class="chips" id="loanFilter">
+        <button class="chip" data-f="action" aria-pressed="true">ต้องจัดการ</button>
+        <button class="chip" data-f="active" aria-pressed="false">กำลังใช้งาน</button>
+        <button class="chip" data-f="mine" aria-pressed="false">ของฉัน</button>
+        <button class="chip" data-f="all" aria-pressed="false">ทั้งหมด</button>
+      </div>
+      <ul class="list" id="loanList"></ul>
+    </section>
+
+    <!-- Report tab -->
+    <section id="tab-report" class="tab" hidden>
+      <div class="card">
+        <div class="seg" id="repType" role="radiogroup">
+          <button data-r="register" aria-pressed="true">ทะเบียนทรัพย์สิน</button>
+          <button data-r="history" aria-pressed="false">ประวัติเบิก-คืน</button>
+          <button data-r="overdue" aria-pressed="false">ค้างคืน / เกินกำหนด</button>
+        </div>
+        <div class="filters" id="repFilters">
+          <label data-for="history">ตั้งแต่<input type="date" id="rFrom"></label>
+          <label data-for="history">ถึง<input type="date" id="rTo"></label>
+          <label data-for="history overdue">Project<input id="rProject" list="projectList" placeholder="ทั้งหมด"></label>
+          <label data-for="history overdue">ผู้รับผิดชอบ<select id="rHolder"><option value="">ทั้งหมด</option></select></label>
+          <label data-for="register history overdue">SKU<input id="rSku" placeholder="ทั้งหมด"></label>
+          <label data-for="register history">สถานะ<select id="rStatus"><option value="">ทั้งหมด</option></select></label>
+        </div>
+        <div class="toolbar end">
+          <span class="muted small" id="repCount"></span>
+          <button class="btn primary" id="btnCsv">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="repTable"></table></div>
+    </section>
+    <!-- Users tab (user.manage) -->
+    <section id="tab-users" class="tab" hidden>
+      <div class="seg" id="userSeg">
+        <button data-u="invites" aria-pressed="true">รหัสเชิญ</button>
+        <button data-u="people" aria-pressed="false">ผู้ใช้</button>
+        <button data-u="roles" aria-pressed="false" id="segRoles">สิทธิ์</button>
+      </div>
+      <div id="usersBody" class="tab"></div>
+    </section>
+  </main>
+  </div>
+
+  <!-- Cart bar -->
+  <div class="cart-bar" id="cartBar" hidden>
+    <span id="cartText"></span>
+    <button class="btn ghost sm" id="btnCartClear">ล้าง</button>
+    <button class="btn primary" id="btnCartGo">เบิก →</button>
+  </div>
+
+  <button class="fab" id="btnScan" aria-label="สแกน QR"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5.5A1.5 1.5 0 015.5 4H8M16 4h2.5A1.5 1.5 0 0120 5.5V8M20 16v2.5a1.5 1.5 0 01-1.5 1.5H16M8 20H5.5A1.5 1.5 0 014 18.5V16"/><path d="M7 12h10"/></svg><span>สแกน</span></button>
+</div>
+
+<datalist id="projectList"></datalist>
+
+<!-- Generic sheet / modal -->
+<div class="overlay" id="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head"><h2 id="sheetTitle"></h2><button class="icon-btn" id="sheetClose" aria-label="ปิด">✕</button></div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="printArea" class="print-area"></div>
+
+<script src="config.js"></script>
+<script src="mock.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js" integrity="sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1" crossorigin="anonymous"></script>
+<script src="app.js"></script>
+</body>
+</html>
