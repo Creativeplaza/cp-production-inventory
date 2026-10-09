@@ -285,35 +285,68 @@
     S.tab = t; hideHover();
     $$('.side-nav [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x.dataset.tab === t)); });
     ['assets', 'loans', 'report', 'users', 'settings'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
+    $$('#tab-' + t + ' .has-pill').forEach(function (g) { g._lq(false); }); // pills measured while their tab was hidden
     $('#pageTitle').textContent = TAB_TITLES[t] || '';
     replay($('#tab-' + t), 'page-enter'); replay($('#pageTitle'), 'title-enter'); stagger(); moveBlob(true);
     $('#cartBar').hidden = t !== 'assets' || !S.cart.length;
     if (t === 'users' && S.me) loadUsersTab();
     try { sessionStorage.setItem('cpi_tab', t); } catch (e) {}
   }
-  // Liquid selection blob behind the sidebar menu: on a tab change it stretches to bridge the old and new item,
-  // then settles on the new one (a fluid "pour"); layout changes just snap it into place.
-  var blob = null, blobPos = null, blobAnim = null, reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
-  function moveBlob(animate) {
-    var nav = $('.side-nav'); if (!nav) return;
-    if (!blob) { blob = document.createElement('span'); blob.className = 'nav-blob'; blob.setAttribute('aria-hidden', 'true'); nav.insertBefore(blob, nav.firstChild); nav.classList.add('has-blob'); }
-    var el = $('.side-nav .nav-item[aria-selected=true]');
-    if (!el || el.hidden || !el.offsetHeight) { blob.style.opacity = '0'; blobPos = null; return; }
-    var to = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }, from = blobPos;
+  // Liquid selection pills: one shape per group (sidebar menu, filter chips, segmented controls) sits behind the
+  // selected item. On a change it stretches to bridge the old and new item, thins across the motion, then pulls
+  // its tail in with a slight overshoot; layout changes just snap it into place. Reduced motion → no animation.
+  function motionOK() { return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  function liquid(group, selSel, cls) {
+    if (!group) return function () {};
+    var pill = document.createElement('span'), pos = null, anim = null;
+    pill.className = 'lq-pill ' + cls; pill.setAttribute('aria-hidden', 'true'); group.insertBefore(pill, group.firstChild); group.classList.add('has-pill');
     function at(p) { return { transform: 'translate(' + p.x + 'px,' + p.y + 'px)', width: p.w + 'px', height: p.h + 'px' }; }
-    if (blobAnim) { blobAnim.cancel(); blobAnim = null; }
-    Object.assign(blob.style, at(to), { opacity: '' }); blobPos = to;
-    if (!animate || !from || reduceMotion.matches || !blob.animate || (from.y === to.y && from.x === to.x)) return;
-    var top = Math.min(from.y, to.y), span = Math.abs(to.y - from.y) + (to.y > from.y ? to.h : from.h), thin = Math.min(from.w, to.w) * 0.9;
-    var mid = { x: to.x + (to.w - thin) / 2, y: top, w: thin, h: span };
-    blobAnim = blob.animate([
-      Object.assign(at(from), { borderRadius: '16px', easing: 'cubic-bezier(.55,0,.35,1)' }),  // stretch toward the new item
-      Object.assign(at(mid), { borderRadius: '26px', offset: 0.4, easing: 'cubic-bezier(.2,1.25,.35,1)' }), // pull the tail in, slight overshoot
-      Object.assign(at(to), { borderRadius: '16px' })
-    ], { duration: 600, easing: 'linear' });
-    blobAnim.onfinish = function () { blobAnim = null; };
+    function move(animate) {
+      var el = group.querySelector(selSel);
+      if (!el || el.hidden || !el.offsetHeight) { pill.style.opacity = '0'; pos = null; return; }
+      var to = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }, from = pos;
+      if (from && from.x === to.x && from.y === to.y && from.w === to.w && from.h === to.h) return; // repeat notification: keep a running flow
+      if (anim) { anim.cancel(); anim = null; }
+      Object.assign(pill.style, at(to), { opacity: '' }); pos = to;
+      if (!animate || !from || !motionOK() || !pill.animate || (from.x === to.x && from.y === to.y)) return;
+      var x0 = Math.min(from.x, to.x), y0 = Math.min(from.y, to.y), x1 = Math.max(from.x + from.w, to.x + to.w), y1 = Math.max(from.y + from.h, to.y + to.h);
+      var vertical = Math.abs(to.y - from.y) > Math.abs(to.x - from.x), mid = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      if (vertical) { var tw = Math.min(from.w, to.w) * 0.9; mid.x = to.x + (to.w - tw) / 2; mid.w = tw; }
+      else { var th = Math.min(from.h, to.h) * 0.82; mid.y = to.y + (to.h - th) / 2; mid.h = th; }
+      var r = getComputedStyle(pill).borderRadius;
+      anim = pill.animate([
+        Object.assign(at(from), { borderRadius: r, easing: 'cubic-bezier(.55,0,.35,1)' }),              // stretch toward the new item
+        Object.assign(at(mid), { borderRadius: '999px', offset: 0.4, easing: 'cubic-bezier(.2,1.25,.35,1)' }), // pull the tail in, overshoot a hair
+        Object.assign(at(to), { borderRadius: r })
+      ], { duration: 600, easing: 'linear' });
+      anim.onfinish = function () { anim = null; };
+    }
+    group._lq = move;
+    if (window.MutationObserver) new MutationObserver(function () { move(true); }).observe(group, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'aria-pressed', 'hidden'] });
+    if (window.ResizeObserver) new ResizeObserver(function () { move(false); }).observe(group);
+    return move;
   }
-  if (window.ResizeObserver) new ResizeObserver(function () { moveBlob(false); }).observe($('.side-nav'));
+  var moveBlob = liquid($('.side-nav'), '.nav-item[aria-selected=true]', 'nav-blob');
+  liquid($('#loanFilter'), '.chip[aria-pressed=true]', 'chip-pill');
+  $$('.seg').forEach(function (g) { liquid(g, 'button[aria-pressed=true]', 'seg-pill'); });
+  // FLIP: when a list re-renders (filter / data change), cards that stay glide from their old spot to the new one
+  // and new cards melt in, instead of the list jumping. Keyed by an attribute; skipped for long lists.
+  function flipSnap(list, attr) {
+    if (!list || !motionOK() || list.offsetParent === null) return null;
+    var m = {}; $$('[' + attr + ']', list).slice(0, 60).forEach(function (el) { m[el.getAttribute(attr)] = el.getBoundingClientRect(); });
+    return { list: list, attr: attr, m: m };
+  }
+  function flipPlay(snap) {
+    if (!snap || snap.list.classList.contains('stagger')) return;
+    var els = $$('[' + snap.attr + ']', snap.list); if (els.length > 60) return;
+    els.forEach(function (el) {
+      var old = snap.m[el.getAttribute(snap.attr)], now = el.getBoundingClientRect();
+      if (!el.animate) return;
+      if (!old) { el.animate([{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.2,1.1,.3,1)' }); return; }
+      var dx = old.left - now.left, dy = old.top - now.top; if (!dx && !dy) return;
+      el.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 520, easing: 'cubic-bezier(.2,1.1,.3,1)' });
+    });
+  }
   // Restart a CSS entrance animation on an element.
   function replay(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
   // Cards cascade in on the next render of the lists (tab switch / fresh data), not on every filter keystroke.
@@ -375,7 +408,7 @@
     });
   }
   function renderAssets() {
-    var list = filteredAssets(), printing = !!S.printSel;
+    var list = filteredAssets(), printing = !!S.printSel, snap = flipSnap($('#assetList'), 'data-asset');
     $('#assetList').innerHTML = list.length ? list.map(function (a) {
       var inCart = S.cart.indexOf(a.assetId) >= 0, od = isOverdueAsset(a);
       var box = printing ? '<input type="checkbox" class="check" data-print="' + esc(a.assetId) + '"' + (S.printSel[a.assetId] ? ' checked' : '') + ' aria-label="เลือกพิมพ์ ' + esc(a.assetId) + '">'
@@ -389,7 +422,7 @@
         '<div class="side">' + (od ? pill('overdue', 'ค้างคืน') : pill(a.status, ASSET_STATUS[a.status] || a.status)) + '</div></li>';
     }).join('') : '<li class="empty">' + (S.assets.length ? 'ไม่พบอุปกรณ์ตามตัวกรอง' : 'ยังไม่มีอุปกรณ์ในระบบ') + '</li>';
     if (printing) $('#printCount').textContent = 'เลือก ' + Object.keys(S.printSel).length + ' ชิ้น';
-    loadCovers(list);
+    flipPlay(snap); loadCovers(list);
   }
 
   /* ---------- cover photos in the list + desktop hover card (contract §14.6) ---------- */
@@ -838,7 +871,9 @@
       if (f === 'mine') return l.requester === me || l.approver === me;
       return true;
     });
+    var snap = flipSnap($('#loanList'), 'data-loan');
     $('#loanList').innerHTML = list.length ? list.map(loanCard).join('') : '<li class="empty">' + (f === 'action' ? 'ไม่มีรายการที่ต้องจัดการ' : 'ไม่มีใบเบิก') + '</li>';
+    flipPlay(snap);
   }
   function loanCard(l) {
     var od = loanOverdue(l);
@@ -846,7 +881,7 @@
       return '<li><span><b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</span>' + pill(i.itemStatus === 'checked_out' && od ? 'overdue' : i.itemStatus, ITEM_STATUS[i.itemStatus] || i.itemStatus) + '</li>';
     }).join('');
     var acts = loanActions(l).map(function (x) { return '<button class="btn sm ' + x[2] + '" data-la="' + x[0] + '" data-id="' + esc(l.loanId) + '">' + x[1] + '</button>'; }).join('');
-    return '<li class="item"><div class="main" style="cursor:default">' +
+    return '<li class="item" data-loan="' + esc(l.loanId) + '"><div class="main" style="cursor:default">' +
       '<div class="row" style="justify-content:space-between;align-items:center"><span><span class="id">' + esc(l.loanId) + '</span> · ' + esc(l.project) + '</span>' +
       '<span style="flex:0">' + pill(od ? 'overdue' : loanPillClass(l), od ? 'เกินกำหนด ' + daysLate(l.dueDate) + ' วัน' : loanStatusText(l)) + '</span></div>' +
       '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + ' · อนุมัติโดย ' + esc(l.approverName || l.approver) + '</div>' +
