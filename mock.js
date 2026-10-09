@@ -3,7 +3,7 @@
    Mock users (PIN 1234): admin, appr (approver), store (storekeeper), req (requester). */
 (function () {
   if (window.CPI_CONFIG.API_URL) return;
-  var KEY = 'cpi_mock_v2';
+  var KEY = 'cpi_mock_v3';
   function seed() {
     var now = new Date().toISOString();
     function a(id, sku, name, cat, model, serial, loc) {
@@ -31,6 +31,8 @@
         { roleId: 'storekeeper', name: 'ผู้ดูแลคลัง', perms: ['loan.request', 'loan.issue', 'report.view'], system: false },
         { roleId: 'requester', name: 'ผู้เบิก', perms: ['loan.request'], system: false }
       ],
+      categories: [{ code: 'MEA', name: 'อุปกรณ์วัด', active: true }, { code: 'CAM', name: 'กล้อง / สแกน 3D', active: true }, { code: 'TOL', name: 'เครื่องมือ', active: true }, { code: 'OTH', name: 'อื่นๆ', active: true }],
+      photos: [],
       invites: [], badInvite: [],
       loans: [], events: [], seq: {}
     };
@@ -59,7 +61,10 @@
   function loanOut(db, l) {
     var o = JSON.parse(JSON.stringify(l));
     o.requesterName = nameOf(db, l.requester); o.approverName = nameOf(db, l.approver);
-    o.items.forEach(function (it) { var a = assetBy(db, it.assetId) || {}; it.assetName = a.name || ''; it.sku = a.sku || ''; });
+    o.items.forEach(function (it) {
+      var a = assetBy(db, it.assetId) || {}; it.assetName = a.name || ''; it.sku = a.sku || '';
+      it.photos = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'return' && x.loanId === l.loanId && x.assetId === it.assetId; }).map(function (x) { return { photoId: x.photoId, thumb: x.thumb }; });
+    });
     return o;
   }
   function approvers(db) {
@@ -83,10 +88,12 @@
     if (!u) return err(401, 'Unauthorized');
     if (api === 'me') return { success: true, user: { username: u.username, name: u.name, role: u.role }, perms: perms(u) };
     if (api === 'bundle') return { success: true, assets: db.assets, loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
-      approvers: approvers(db), roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }), me: { username: u.username, name: u.name, role: u.role, perms: perms(u) }, serverTime: Date.now() };
+      approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }), me: { username: u.username, name: u.name, role: u.role, perms: perms(u) }, serverTime: Date.now() };
     if (api === 'getAsset') {
       var a = assetBy(db, p.id); if (!a) return err(404, 'NOT_FOUND');
-      return { success: true, item: a,
+      var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; })
+        .map(function (x) { return { photoId: x.photoId, thumb: x.thumb, width: x.width, height: x.height, uploadedAt: x.uploadedAt }; });
+      return { success: true, item: a, photos: ph,
         loans: db.loans.filter(function (l) { return l.items.some(function (i) { return i.assetId === a.assetId; }); }).reverse().map(function (l) { return loanOut(db, l); }),
         events: db.events.filter(function (e) { return e.assetId === a.assetId; }).reverse().slice(0, 100) };
     }
@@ -94,6 +101,11 @@
       if (!has(u, 'report.view')) return err(403, 'FORBIDDEN');
       var all = db.loans.slice().reverse(), start = +(p.cursor || 0), lim = Math.min(+p.limit || 500, 1000);
       return { success: true, items: all.slice(start, start + lim).map(function (l) { return loanOut(db, l); }), hasMore: start + lim < all.length, nextCursor: start + lim < all.length ? String(start + lim) : '' };
+    }
+    if (api === 'getPhoto') {
+      var pp = db.photos.find(function (x) { return x.photoId === p.photoId; });
+      if (!pp || (pp.status === 'pending' && pp.uploadedBy !== u.username) || (pp.status === 'detached' && pp.uploadedBy !== u.username && u.role !== 'admin')) return err(404, 'NOT_FOUND');
+      return { success: true, photo: { photoId: pp.photoId, mime: 'image/jpeg', data: pp.thumb.split(',')[1] } };
     }
     if (api === 'listUsers') { if (!has(u, 'user.manage')) return err(403, 'FORBIDDEN'); return { success: true, items: db.users.map(function (x) { return { username: x.username, name: x.name, role: x.role, active: x.active, lastLoginAt: x.lastLoginAt || '' }; }) }; }
     if (api === 'listInvites') { if (!has(u, 'user.manage')) return err(403, 'FORBIDDEN'); return { success: true, items: db.invites.map(function (i) { var o = Object.assign({}, i); delete o.code; return o; }).reverse() }; }
@@ -128,11 +140,45 @@
     var P = perms(u), rid = b.requestId;
     var dup = rid && db.events.find(function (e) { return e.requestId === rid; });
     if (dup) return { success: true, duplicate: true };
+    // photos (§14): validate a set of ids for attachment
+    function photoSet(ids, kind, min, max, assetId) {
+      if (!Array.isArray(ids) || ids.length < min || ids.length > max || new Set(ids).size !== ids.length) return 'PHOTO_COUNT';
+      var t = Date.now();
+      for (var q = 0; q < ids.length; q++) {
+        var x = db.photos.find(function (y) { return y.photoId === ids[q]; });
+        var keep = x && x.status === 'attached' && kind === 'asset' && x.kind === 'asset' && assetId && x.assetId === assetId;
+        var fresh = x && x.status === 'pending' && x.kind === kind && x.uploadedBy === u.username && t - Date.parse(x.uploadedAt) < 864e5;
+        if (!keep && !fresh) return 'PHOTO_INVALID';
+      }
+      return '';
+    }
+    function attach(ids, kind, assetId, loanId) {
+      if (kind === 'asset') db.photos.forEach(function (x) { if (x.kind === 'asset' && x.assetId === assetId && x.status === 'attached' && ids.indexOf(x.photoId) < 0) { x.status = 'detached'; } });
+      ids.forEach(function (id, i) { var x = db.photos.find(function (y) { return y.photoId === id; }); x.status = 'attached'; x.assetId = assetId; x.loanId = loanId || ''; x.position = i + 1; });
+    }
     var loan = b.loanId && db.loans.find(function (l) { return l.loanId === b.loanId; });
     var now = new Date().toISOString(), r;
     switch (b.action) {
+      case 'photo_upload': {
+        if (b.kind === 'asset' ? !P.assetManage : b.kind === 'return' ? !P.loanIssue : true) return err(403, 'FORBIDDEN');
+        if (!/^data:image\/jpeg;base64,/.test(b.thumb || '') || !b.data) return err(400, 'PHOTO_INVALID');
+        if (db.photos.filter(function (x) { return x.status === 'pending' && x.uploadedBy === u.username; }).length >= 30) return err(429, 'PHOTO_QUOTA');
+        var pid = 'P' + (db.photos.length + 1) + '-' + Math.random().toString(36).slice(2, 7);
+        db.photos.push({ photoId: pid, kind: b.kind, thumb: b.thumb, width: b.width, height: b.height, status: 'pending', uploadedBy: u.username, uploadedAt: now, assetId: '', loanId: '', position: 0 });
+        ev(db, u.username, 'photo_upload', '', '', '', '', pid, rid); save(db);
+        return { success: true, photo: { photoId: pid, kind: b.kind, thumb: b.thumb, width: b.width, height: b.height } };
+      }
+      case 'category_upsert': {
+        if (!P.assetManage) return err(403, 'FORBIDDEN');
+        if (!/^[A-Z]{2,4}$/.test(b.code || '') || !String(b.name || '').trim()) return err(400, 'ข้อมูลหมวดไม่ถูกต้อง');
+        var cat = db.categories.find(function (x) { return x.code === b.code; });
+        if (cat) { cat.name = b.name.trim(); cat.active = b.active !== false; } else db.categories.push({ code: b.code, name: b.name.trim(), active: b.active !== false });
+        ev(db, u.username, 'category_upsert', '', '', '', '', b.code, rid); save(db); return { success: true };
+      }
       case 'asset_create': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
+        if (!db.categories.some(function (x) { return x.code === b.category && x.active; })) return err(400, 'หมวดนี้ปิดใช้หรือไม่มีอยู่');
+        var pe = photoSet(b.photoIds, 'asset', 1, 5, null); if (pe) return err(400, pe === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID');
         if (!/^[A-Z]{2,4}$/.test(b.category || '')) return err(400, 'หมวดไม่ถูกต้อง');
         if (!/^[A-Z0-9-]{2,24}$/.test(b.sku || '')) return err(400, 'SKU ไม่ถูกต้อง');
         if (!b.name) return err(400, 'ต้องระบุชื่อ');
@@ -140,11 +186,12 @@
         var id = b.category + '-' + String(n).padStart(4, '0');
         var na = { assetId: id, sku: b.sku, name: b.name, category: b.category, model: b.model || '', serial: b.serial || '', location: b.location || '',
           status: 'available', currentLoanId: '', holder: '', project: '', dueDate: '', notes: b.notes || '', createdAt: now, updatedAt: now };
-        db.assets.push(na); ev(db, u.username, 'asset_create', '', id, '', 'available', '', rid); save(db); return { success: true, asset: na };
+        db.assets.push(na); attach(b.photoIds, 'asset', id); ev(db, u.username, 'asset_create', '', id, '', 'available', '', rid); save(db); return { success: true, asset: na };
       }
       case 'asset_update': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
         var ua = assetBy(db, b.assetId); if (!ua) return err(404, 'NOT_FOUND');
+        if (b.photoIds !== undefined) { var pu = photoSet(b.photoIds, 'asset', 1, 5, ua.assetId); if (pu) return err(400, pu === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID'); attach(b.photoIds, 'asset', ua.assetId); }
         ['sku', 'name', 'model', 'serial', 'location', 'notes'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
         if (b.status && b.status !== ua.status) {
           if (ua.currentLoanId) return err(409, 'BAD_TRANSITION');
@@ -202,6 +249,9 @@
         var rs = b.items || []; if (!rs.length) return err(400, 'เลือกอุปกรณ์ที่รับคืน');
         if (rs.some(function (x) { return !String(x.conditionIn || '').trim(); })) return err(400, 'ต้องระบุสภาพตอนคืน');
         if (rs.some(function (x) { return x.damaged && x.lost; })) return err(400, 'เสียหายและสูญหายพร้อมกันไม่ได้');
+        var allIds = []; rs.forEach(function (x) { allIds = allIds.concat(x.photoIds || []); });
+        if (new Set(allIds).size !== allIds.length) return err(400, 'รูปซ้ำข้ามรายการ');
+        for (var z = 0; z < rs.length; z++) { var rz = photoSet(rs[z].photoIds, 'return', 1, 3, null); if (rz) return err(400, rz === 'PHOTO_COUNT' ? 'ทุกชิ้นต้องมีรูป 1–3 รูป' : 'PHOTO_INVALID'); }
         for (var k = 0; k < rs.length; k++) {
           var it = loan.items.find(function (i) { return i.assetId === rs[k].assetId; });
           if (!it || it.itemStatus !== 'checked_out') return err(409, 'BAD_TRANSITION', { assetIds: [rs[k].assetId] });
@@ -211,6 +261,7 @@
           it.itemStatus = x.lost ? 'lost' : 'returned'; it.returnedAt = now; it.returnedBy = u.username;
           it.conditionIn = x.conditionIn || ''; it.damaged = !!x.damaged; it.lost = !!x.lost; it.note = x.note || '';
           setAsset(db, x.assetId, x.lost ? 'lost' : x.damaged ? 'inspection' : 'available', null, u.username, 'loan_return', rid);
+          attach(x.photoIds, 'return', x.assetId, loan.loanId);
         });
         var open = loan.items.some(function (i) { return i.itemStatus === 'checked_out'; });
         loan.status = open ? 'partially_returned' : 'returned'; if (!open) loan.returnedAt = now;
@@ -269,7 +320,7 @@
     return err(400, 'Unknown action');
   }
 
-  var READS = ['me', 'bundle', 'getAsset', 'listLoans', 'listUsers', 'listInvites', 'listRoles'];
+  var READS = ['me', 'bundle', 'getAsset', 'listLoans', 'listUsers', 'listInvites', 'listRoles', 'getPhoto'];
   window.CPI_MOCK = {
     post: function (b) { return new Promise(function (res) { setTimeout(function () { res(READS.indexOf(b.action) >= 0 ? get(b.action, b) : post(b)); }, 180); }); },
     reset: function () { localStorage.removeItem(KEY); }

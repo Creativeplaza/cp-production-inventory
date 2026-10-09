@@ -231,6 +231,29 @@ tbody tr:last-child td{border-bottom:0}
 .toast.show{opacity:1;transform:translateX(-50%)}
 .toast.err{background:var(--bad);color:#fff}
 
+/* photos */
+.field{display:grid;gap:6px}
+.ph-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px}
+.ph{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.7);border:1px solid var(--line);display:grid;place-items:center}
+.ph img{width:100%;height:100%;object-fit:cover;display:block}
+.ph.up img{filter:saturate(.4) brightness(1.1);opacity:.6}
+.ph.err{border-color:rgba(179,38,30,.4)}
+.ph-msg{position:absolute;inset:auto 4px 4px;font-size:11px;color:var(--bad);background:#fff;border-radius:6px;text-align:center}
+.ph-spin{position:absolute;width:22px;height:22px;border-radius:50%;border:2.5px solid rgba(98,0,175,.2);border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ph-x{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;background:rgba(18,18,20,.72);color:#fff;display:grid;place-items:center;cursor:pointer;padding:0}
+.ph-x .ico{width:14px;height:14px}
+.ph-add{cursor:pointer;border:1.5px dashed var(--accent-line);background:var(--accent-soft);color:var(--accent);gap:4px;align-content:center;font-size:12px;font-weight:600;text-align:center;padding:6px}
+.ph-add .ico{width:22px;height:22px}
+.ph-hint{margin:0}
+.ph-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px}
+.ph-t{flex:none;width:72px;height:72px;border-radius:12px;overflow:hidden;border:1px solid var(--line-hi);padding:0;cursor:zoom-in;background:#fff;box-shadow:0 1px 3px rgba(30,30,40,.12)}
+.ph-t img{width:100%;height:100%;object-fit:cover;display:block}
+.timeline .ph-strip{margin-top:6px}.timeline .ph-t{width:52px;height:52px;border-radius:10px}
+.ret-row.off{opacity:.55}.ret-row.off .field{display:none}
+.lightbox{position:fixed;inset:0;z-index:80;background:rgba(10,10,14,.86);display:grid;place-items:center;padding:16px;cursor:zoom-out}
+.lightbox img{max-width:100%;max-height:100%;border-radius:12px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.lightbox.opening{animation:fadeIn .2s ease both}
 /* ---------- motion ---------- */
 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}

@@ -87,6 +87,7 @@
       <button class="nav-item" role="tab" data-tab="loans" aria-selected="false" title="ใบเบิก"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 3.5h6v3H9z"/><path d="M9 11h6M9 15h4"/></svg><span class="dot-badge" id="loanBadge" hidden></span></span><span class="nav-txt">ใบเบิก</span></button>
       <button class="nav-item" role="tab" data-tab="report" aria-selected="false" title="รายงาน" id="navReport"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 3.5v17h17"/><path d="M7.5 15l4-4.5 3 3 5-6"/></svg></span><span class="nav-txt">รายงาน</span></button>
       <button class="nav-item" role="tab" data-tab="users" aria-selected="false" title="ผู้ใช้" id="navUsers" hidden><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 010 7M18.5 14.8c1.6.8 2.7 2.6 3 5.2"/></svg></span><span class="nav-txt">ผู้ใช้</span></button>
+          <button class="nav-item" role="tab" data-tab="settings" aria-selected="false" title="ตั้งค่า" id="navSettings" hidden><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span><span class="nav-txt">ตั้งค่า</span></button>
     </nav>
     <div class="side-foot">
       <button class="side-card" id="sideCard" type="button"></button>
@@ -157,6 +158,20 @@
       </div>
       <div class="table-wrap"><table id="repTable"></table></div>
     </section>
+    <!-- Settings tab (asset.manage) -->
+    <section id="tab-settings" class="tab" hidden>
+      <div class="card">
+        <h3>หมวดอุปกรณ์</h3>
+        <p class="muted small" style="margin:0">รหัสหมวด (A–Z 2–4 ตัว) ใช้นำหน้ารหัสอุปกรณ์ เช่น MEA-0001 · แก้รหัสไม่ได้หลังสร้าง · ปิดใช้แทนการลบ</p>
+        <ul class="list" id="catList"></ul>
+        <form id="catForm" class="row" autocomplete="off">
+          <label>รหัส<input name="code" required pattern="[A-Za-z]{2,4}" maxlength="4" placeholder="เช่น DRN"></label>
+          <label>ชื่อหมวด<input name="name" required maxlength="40" placeholder="เช่น โดรน"></label>
+          <button class="btn primary" type="submit" style="align-self:end;flex:0 0 auto">เพิ่มหมวด</button>
+        </form>
+      </div>
+    </section>
+
     <!-- Users tab (user.manage) -->
     <section id="tab-users" class="tab" hidden>
       <div class="seg" id="userSeg">
@@ -190,6 +205,7 @@
 </div>
 
 <div class="top-progress" id="topProgress" hidden></div>
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-label="รูปขยาย"><img id="lightboxImg" alt=""></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div id="printArea" class="print-area"></div>
 

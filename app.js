@@ -8,7 +8,10 @@
   var ASSET_STATUS = { available: 'ว่าง', reserved: 'จองแล้ว', checked_out: 'ถูกเบิก', inspection: 'รอตรวจ', maintenance: 'ซ่อม', lost: 'สูญหาย', retired: 'เลิกใช้งาน' };
   var LOAN_STATUS = { pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ปฏิเสธ', checked_out: 'จ่ายออกแล้ว', partially_returned: 'คืนบางส่วน', returned: 'คืนครบ', cancelled: 'ยกเลิก' };
   var ITEM_STATUS = { requested: 'รอจ่าย', checked_out: 'อยู่กับผู้เบิก', returned: 'คืนแล้ว', lost: 'สูญหาย', cancelled: 'ยกเลิก' };
-  var CATEGORIES = { MEA: 'อุปกรณ์วัด', CAM: 'กล้อง / สแกน 3D', TOL: 'เครื่องมือ', OTH: 'อื่นๆ' };
+  var CATEGORIES_FALLBACK = { MEA: 'อุปกรณ์วัด', CAM: 'กล้อง / สแกน 3D', TOL: 'เครื่องมือ', OTH: 'อื่นๆ' };
+  // v0.6: categories come from the server (bundle.categories); the fallback only covers an older backend.
+  function cats() { return (S.categories && S.categories.length) ? S.categories : Object.keys(CATEGORIES_FALLBACK).map(function (c) { return { code: c, name: CATEGORIES_FALLBACK[c], active: true }; }); }
+  function catName(code) { var c = cats().find(function (x) { return x.code === code; }); return c ? c.name : code; }
   var ROLES = { admin: 'ผู้ดูแลระบบ', approver: 'ผู้อนุมัติ', storekeeper: 'ผู้ดูแลคลัง', requester: 'ผู้เบิก' };
 
   var S = { gen: 0, dataGen: 0, modal: 0, token: null, me: null, assets: [], loans: [], approvers: [], cart: [], printSel: null, statFilter: '', loanFilter: 'action', report: 'register' };
@@ -52,6 +55,7 @@
     IDEMPOTENCY_CONFLICT: 'คำขอซ้ำไม่ตรงกับของเดิม กรุณาลองใหม่', USER_EXISTS: 'ชื่อผู้ใช้นี้มีแล้ว',
     SESSION_CAPACITY: 'มีผู้ใช้งานพร้อมกันเต็ม กรุณาลองใหม่ภายหลัง', NOT_CONFIGURED: 'ระบบยังไม่ได้ตั้งค่า', INTERNAL: 'ระบบขัดข้อง กรุณาลองใหม่' };
   ERR_TEXT.RATE_LIMIT = ERR_TEXT.RATE_LIMITED;
+  ERR_TEXT.PHOTO_INVALID = 'รูปไม่ถูกต้องหรือหมดอายุ กรุณาอัปรูปใหม่'; ERR_TEXT.PAYLOAD_TOO_LARGE = 'ไฟล์รูปใหญ่เกินไป';
   ERR_TEXT.INVITE_INVALID = 'รหัสเชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้ครบแล้ว'; ERR_TEXT.ROLE_IN_USE = 'ยังมีผู้ใช้หรือรหัสเชิญที่ใช้ role นี้อยู่';
   function errText(r) {
     var t = (r && ERR_TEXT[r.code]) || (r && r.error) || 'เกิดข้อผิดพลาด';
@@ -238,7 +242,7 @@
   function reload() {
     return apiGet('bundle').then(function (r) {
       if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
-      S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers;
+      S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : [];
       if (Array.isArray(r.roles) && !S.users.length) S.roles = r.roles;
       // Fail closed: anything but an explicit false means the bundle may not hold every loan.
       S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
@@ -255,11 +259,12 @@
     $('#who').textContent = S.me.name; $('#whoRole').textContent = roleName(S.me.role);
     $('#avatar').textContent = (S.me.name || S.me.username || '?').trim().charAt(0).toUpperCase();
     $('.side-user').title = S.me.name + ' · ' + roleName(S.me.role);
-    $('#navUsers').hidden = !P().userManage; $('#navReport').hidden = !P().reportView;
+    $('#navUsers').hidden = !P().userManage; $('#navReport').hidden = !P().reportView; $('#navSettings').hidden = !P().assetManage;
     $('#assetAdminBar').hidden = !P().assetManage;
-    if ((S.tab === 'users' && !P().userManage) || (S.tab === 'report' && !P().reportView)) switchTab('assets');
-    var cats = {}; S.assets.forEach(function (a) { cats[a.category] = 1; }); Object.keys(CATEGORIES).forEach(function (c) { cats[c] = 1; });
-    fillSelect($('#fCat'), Object.keys(cats).sort().map(function (c) { return [c, c + ' · ' + (CATEGORIES[c] || c)]; }), 'ทุกหมวด');
+    if ((S.tab === 'users' && !P().userManage) || (S.tab === 'report' && !P().reportView) || (S.tab === 'settings' && !P().assetManage)) switchTab('assets');
+    renderSettings();
+    var used = {}; S.assets.forEach(function (a) { used[a.category] = 1; }); cats().forEach(function (c) { if (c.active) used[c.code] = 1; });
+    fillSelect($('#fCat'), Object.keys(used).sort().map(function (c) { return [c, c + ' · ' + catName(c)]; }), 'ทุกหมวด');
     fillSelect($('#fStatus'), Object.keys(ASSET_STATUS).map(function (k) { return [k, ASSET_STATUS[k]]; }), 'ทุกสถานะ');
     var projects = {}; S.loans.forEach(function (l) { projects[l.project] = 1; });
     $('#projectList').innerHTML = Object.keys(projects).map(function (p) { return '<option value="' + esc(p) + '">'; }).join('');
@@ -272,14 +277,14 @@
   }
 
   /* ---------- side menu (collapsible on desktop, drawer on mobile) ---------- */
-  var TAB_TITLES = { assets: 'อุปกรณ์', loans: 'ใบเบิก', report: 'รายงาน', users: 'ผู้ใช้' };
+  var TAB_TITLES = { assets: 'อุปกรณ์', loans: 'ใบเบิก', report: 'รายงาน', users: 'ผู้ใช้', settings: 'ตั้งค่า' };
   $$('.side-nav [data-tab]').forEach(function (b) {
     b.addEventListener('click', function () { switchTab(b.dataset.tab); closeDrawer(); });
   });
   function switchTab(t) {
     S.tab = t;
     $$('.side-nav [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x.dataset.tab === t)); });
-    ['assets', 'loans', 'report', 'users'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
+    ['assets', 'loans', 'report', 'users', 'settings'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
     $('#pageTitle').textContent = TAB_TITLES[t] || '';
     replay($('#tab-' + t), 'page-enter'); replay($('#pageTitle'), 'title-enter'); stagger();
     $('#cartBar').hidden = t !== 'assets' || !S.cart.length;
@@ -419,8 +424,9 @@
     if (!a) { toast('ไม่พบอุปกรณ์ ' + id, true); return; }
     openSheet(a.assetId + ' · ' + a.name, '<p class="muted">กำลังโหลด…</p>');
     var mg = S.modal;
+    var photos = [];
     render(a, null, false);
-    apiGet('getAsset', { id: id }).then(function (r) { if (mg === S.modal) render(r.item, r.loans || [], !!r.truncated); })
+    apiGet('getAsset', { id: id }).then(function (r) { if (mg === S.modal) { photos = r.photos || []; render(r.item, r.loans || [], !!r.truncated); } })
       .catch(function (r) { if (mg === S.modal) toast(errText(r), true); });
 
     function render(a, loans, truncated) {
@@ -433,35 +439,114 @@
         var it = (l.items || []).find(function (i) { return i.assetId === a.assetId; }) || {};
         var end = it.itemStatus === 'lost' ? ' · แจ้งสูญหาย ' + fmtDT(it.returnedAt) : ' · คืน ' + fmtDT(it.returnedAt);
         return '<li><b>' + esc(l.loanId) + '</b> ' + pill(loanPillClass(l), loanStatusText(l)) + '<br>' + esc(l.project) + ' · ' + esc(l.requesterName || l.requester) +
-          '<br><span class="muted">ออก ' + fmtDT(it.checkedOutAt) + end + (it.damaged ? ' · เสียหาย' : '') + '</span></li>';
+          '<br><span class="muted">ออก ' + fmtDT(it.checkedOutAt) + end + (it.damaged ? ' · เสียหาย' : '') + '</span>' + thumbStrip(it.photos) + '</li>';
       }).join('') + '</ul>' + (loans.length > 20 || truncated ? '<p class="muted small">แสดงเฉพาะรายการล่าสุด — ประวัติทั้งหมดดูได้ที่แท็บรายงาน</p>' : '')
         : '<p class="muted small">ยังไม่มีประวัติการเบิก</p>';
       $('#sheetBody').innerHTML =
         '<div class="qr-box">' + qrSvg(assetUrl(a.assetId)) + '<div>' + (od ? pill('overdue', 'ค้างคืน ' + daysLate(a.dueDate) + ' วัน') : pill(a.status, ASSET_STATUS[a.status])) +
         '<p class="muted small">' + esc(a.sku) + '</p></div></div>' +
         '<dl class="kv"><dt>รุ่น</dt><dd>' + esc(a.model || '–') + '</dd><dt>Serial</dt><dd>' + esc(a.serial || '–') + '</dd>' +
-        '<dt>หมวด</dt><dd>' + esc(CATEGORIES[a.category] || a.category) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
+        '<dt>หมวด</dt><dd>' + esc(catName(a.category)) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
         (a.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(userName(a.holder)) + '</dd><dt>Project</dt><dd>' + esc(a.project) + '</dd><dt>กำหนดคืน</dt><dd>' + fmtDate(a.dueDate) + '</dd>' : '') +
         (a.notes ? '<dt>หมายเหตุ</dt><dd>' + esc(a.notes) + '</dd>' : '') + '</dl>' +
+        (loans ? (thumbStrip(photos) || '<p class="muted small">ยังไม่มีรูปอุปกรณ์</p>') : '') +
         '<div class="row">' + act.join('') + '</div><h3>ประวัติการเบิก (ล่าสุด)</h3>' + hist;
       $('#sheetBody').onclick = function (e) {
         var b = e.target.closest('[data-act]'); if (!b) return;
         if (b.dataset.act === 'cart') { if (S.cart.indexOf(a.assetId) < 0) toggleCart(a.assetId, true); closeSheet(); switchTab('assets'); }
         if (b.dataset.act === 'loan') openLoan(loan.loanId);
-        if (b.dataset.act === 'edit') openAssetForm(a);
+        if (b.dataset.act === 'edit') openAssetForm(a, photos);
         if (b.dataset.act === 'print') printLabels([a.assetId]);
       };
     }
   }
 
+
+  /* ---------- photos (contract §14) ---------- */
+  var ICON_X = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  var ICON_CAM = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.5-2h5L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  var THUMB_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/;
+  function safeThumb(t) { return typeof t === 'string' && t.length <= 40000 && THUMB_RE.test(t) ? t : ''; }
+  // Downscale on the client: full ≤1600px JPEG 0.8 + thumb ≤240px JPEG 0.7 (keeps uploads small on site connections).
+  function shrink(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        function draw(max, q) {
+          var k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)), w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+          var c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+          return { uri: c.toDataURL('image/jpeg', q), w: w, h: h };
+        }
+        var full = draw(1600, 0.8), th = draw(240, 0.7); URL.revokeObjectURL(url);
+        res({ data: full.uri.split(',')[1], width: full.w, height: full.h, thumb: th.uri });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); rej({ error: 'อ่านไฟล์รูปไม่ได้' }); };
+      img.src = url;
+    });
+  }
+  function uploadShrunk(kind, s) {
+    return apiPost('photo_upload', { kind: kind, mime: 'image/jpeg', data: s.data, width: s.width, height: s.height, thumb: s.thumb })
+      .then(function (r) { return r.photo; });
+  }
+  // A photo picker bound to a container. existing = [{photoId, thumb}] (asset edit). Returns a controller.
+  function photoPicker(el, kind, opts) {
+    var items = (opts.existing || []).map(function (p) { return { photoId: p.photoId, thumb: safeThumb(p.thumb), state: 'done' }; });
+    var ctl = {
+      ids: function () { return items.filter(function (i) { return i.state === 'done'; }).map(function (i) { return i.photoId; }); },
+      shrunk: function () { return items.filter(function (i) { return i.state === 'done' && i.src; }).map(function (i) { return i.src; }); },
+      busy: function () { return items.some(function (i) { return i.state === 'up'; }); },
+      ok: function () { return !ctl.busy() && ctl.ids().length >= opts.min; },
+      onchange: null
+    };
+    function render() {
+      el.innerHTML = '<div class="ph-grid">' + items.map(function (it, k) {
+        return '<div class="ph' + (it.state === 'up' ? ' up' : it.state === 'err' ? ' err' : '') + '">' + (it.thumb ? '<img alt="" src="' + esc(it.thumb) + '">' : '') +
+          (it.state === 'up' ? '<span class="ph-spin"></span>' : '') + (it.state === 'err' ? '<span class="ph-msg">อัปไม่สำเร็จ</span>' : '') +
+          '<button type="button" class="ph-x" data-k="' + k + '" aria-label="ลบรูป">' + ICON_X + '</button></div>';
+      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*" capture="environment" multiple hidden></label>' : '') +
+        '</div><p class="muted small ph-hint">' + (opts.min ? 'ต้องมีอย่างน้อย ' + opts.min + ' รูป · ' : '') + 'สูงสุด ' + opts.max + ' รูป</p>';
+      var input = el.querySelector('input[type=file]'); if (input) input.onchange = function () { add(Array.prototype.slice.call(input.files)); };
+      if (ctl.onchange) ctl.onchange();
+    }
+    function add(files) {
+      files.slice(0, opts.max - items.length).forEach(function (f) {
+        var it = { state: 'up', thumb: '' }; items.push(it);
+        shrink(f).then(function (s) { it.thumb = s.thumb; it.src = s; render(); return uploadShrunk(kind, s); })
+          .then(function (p) { it.photoId = p.photoId; it.state = 'done'; render(); })
+          .catch(function (e) { it.state = 'err'; render(); toast(errText(e), true); });
+      });
+      render();
+    }
+    el.addEventListener('click', function (e) {
+      var x = e.target.closest('.ph-x'); if (!x) return; e.preventDefault(); items.splice(+x.dataset.k, 1); render();
+    });
+    render(); return ctl;
+  }
+  function thumbStrip(photos) {
+    var ok = (photos || []).filter(function (p) { return safeThumb(p.thumb); });
+    return ok.length ? '<div class="ph-strip">' + ok.map(function (p) { return '<button type="button" class="ph-t" data-photo="' + esc(p.photoId) + '"><img alt="" src="' + esc(safeThumb(p.thumb)) + '"></button>'; }).join('') + '</div>' : '';
+  }
+  // Full photo in a lightbox (separate from the sheet so the detail stays open).
+  function openPhoto(id, thumb) {
+    var lb = $('#lightbox'), img = $('#lightboxImg'); img.src = safeThumb(thumb) || ''; lb.hidden = false; replay(lb, 'opening');
+    var g = S.gen;
+    apiGet('getPhoto', { photoId: id }).then(function (r) {
+      var p = r.photo || {}; if (g !== S.gen || lb.hidden) return;
+      if (/^image\/(jpeg|png|webp)$/.test(p.mime) && /^[A-Za-z0-9+\/=]+$/.test(p.data || '')) img.src = 'data:' + p.mime + ';base64,' + p.data;
+    }).catch(function (e) { if (!lb.hidden) toast(errText(e), true); });
+  }
+  function closePhoto() { $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
+  $('#lightbox').addEventListener('click', closePhoto);
+  document.addEventListener('click', function (e) { var t = e.target.closest('[data-photo]'); if (t) { var im = t.querySelector('img'); openPhoto(t.dataset.photo, im && im.getAttribute('src')); } });
+
   /* ---------- asset create / edit ---------- */
   $('#btnAddAsset').addEventListener('click', function () { openAssetForm(null); });
-  function openAssetForm(a) {
+  function openAssetForm(a, photos) {
     var edit = !!a; a = a || {};
     var statusOpts = edit && !a.currentLoanId ? ['available', 'inspection', 'maintenance', 'lost', 'retired'] : [];
     openSheet(edit ? 'แก้ไข ' + a.assetId : 'เพิ่มอุปกรณ์',
       '<form id="assetForm" class="tab">' +
-      (edit ? '' : '<div class="row"><label>หมวด *<select name="category" required>' + Object.keys(CATEGORIES).map(function (c) { return '<option value="' + c + '">' + c + ' · ' + CATEGORIES[c] + '</option>'; }).join('') + '</select></label>' +
+      (edit ? '' : '<div class="row"><label>หมวด *<select name="category" required>' + cats().filter(function (c) { return c.active; }).map(function (c) { return '<option value="' + esc(c.code) + '">' + esc(c.code + ' · ' + c.name) + '</option>'; }).join('') + '</select></label>' +
         '<label>จำนวนชิ้น<input type="number" name="qty" min="1" max="50" value="1"></label></div>') +
       '<label>ชื่ออุปกรณ์ *<input name="name" required maxlength="120" value="' + esc(a.name) + '"></label>' +
       '<div class="row"><label>SKU (รหัสรุ่น) *<input name="sku" required pattern="[A-Z0-9-]{2,24}" placeholder="เช่น MEA-LDM50" value="' + esc(a.sku) + '"></label>' +
@@ -470,24 +555,30 @@
       '<label>ที่จัดเก็บ<input name="location" maxlength="80" value="' + esc(a.location) + '"></label></div>' +
       (statusOpts.length ? '<label>สถานะ<select name="status">' + statusOpts.map(function (s) { return '<option value="' + s + '"' + (s === a.status ? ' selected' : '') + '>' + ASSET_STATUS[s] + '</option>'; }).join('') + '</select></label>' : '') +
       '<label>หมายเหตุ<textarea name="notes" rows="2" maxlength="500">' + esc(a.notes) + '</textarea></label>' +
+      '<div class="field"><span class="pin-label">รูปอุปกรณ์ * (สภาพตั้งต้น)</span><div id="assetPhotos"></div></div>' +
       (edit ? '' : '<p class="muted small">จำนวนหลายชิ้น = รุ่นเดียวกัน SKU เดียวกัน ระบบออกรหัส + QR แยกให้ทีละชิ้น (Serial ใส่ทีหลังได้)</p>') +
       '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่ม') + '</button></form>');
-    var f = $('#assetForm');
+    var f = $('#assetForm'), submit = f.querySelector('[type=submit]');
+    var pick = photoPicker($('#assetPhotos'), 'asset', { min: 1, max: 5, existing: photos || [] });
+    pick.onchange = function () { submit.disabled = !pick.ok(); }; pick.onchange();
     f.sku.addEventListener('input', function () { f.sku.value = f.sku.value.toUpperCase(); });
     f.addEventListener('submit', function (e) {
-      e.preventDefault(); var btn = f.querySelector('[type=submit]'); btn.disabled = true;
-      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim() };
+      e.preventDefault(); var btn = submit; if (!pick.ok()) { toast('ต้องมีรูปอุปกรณ์อย่างน้อย 1 รูป', true); return; } btn.disabled = true;
+      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), photoIds: pick.ids() };
       var p;
       if (edit) { body.assetId = a.assetId; if (f.status && f.status.value !== a.status) body.status = f.status.value; p = apiPost('asset_update', body); }
       else {
         body.category = f.category.value; var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
         p = (function next(i) {
           if (i >= n) return Promise.resolve();
-          return apiPost('asset_create', Object.assign({}, body, { serial: i === 0 ? body.serial : '' })).then(function (r) { made.push(r.asset.assetId); return next(i + 1); });
+          // A photo belongs to one asset (§14.2) → for extra pieces of the same model, upload the same shots again.
+          var ids = i === 0 ? Promise.resolve(body.photoIds) : Promise.all(pick.shrunk().map(function (s) { return uploadShrunk('asset', s).then(function (p) { return p.photoId; }); }));
+          return ids.then(function (photoIds) { return apiPost('asset_create', Object.assign({}, body, { serial: i === 0 ? body.serial : '', photoIds: photoIds })); })
+            .then(function (r) { made.push(r.asset.assetId); return next(i + 1); });
         })(0).then(function () { toast('เพิ่มแล้ว ' + made.join(', ')); });
       }
       p.then(function () { if (edit) toast('บันทึกแล้ว'); closeSheet(); return reload(); })
-        .catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
+        .catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = !pick.ok(); });
     });
   }
 
@@ -581,8 +672,18 @@
       '<form id="retForm" class="tab">' + out.map(function (i) {
         return '<div class="ret-row" data-id="' + esc(i.assetId) + '"><label style="flex-direction:row;display:flex;gap:8px;align-items:center;color:var(--text);font-size:15px"><input type="checkbox" class="check" name="pick" checked> <b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</label>' +
           '<div class="flags"><label><input type="checkbox" name="damaged"> เสียหาย (ส่งตรวจ)</label><label><input type="checkbox" name="lost"> สูญหาย</label></div>' +
-          '<input name="cond" placeholder="สภาพ / หมายเหตุ (ถ้ามี)" maxlength="200"></div>';
+          '<input name="cond" placeholder="สภาพ / หมายเหตุ (ถ้ามี)" maxlength="200">' +
+          '<div class="field"><span class="pin-label">รูปสภาพตอนคืน * (ตำหนิ / ชำรุด)</span><div class="ret-photos"></div></div></div>';
       }).join('') + '<button class="btn primary block" type="submit">ยืนยันรับคืน</button></form>');
+    // Every returned item needs ≥1 photo (§14.2); only picked rows count.
+    var form = $('#retForm'), submit = form.querySelector('[type=submit]'), pickers = {};
+    function refresh() {
+      var rows = $$('.ret-row', form).filter(function (r) { return r.querySelector('[name=pick]').checked; });
+      submit.disabled = !rows.length || rows.some(function (r) { return !pickers[r.dataset.id].ok(); });
+    }
+    $$('.ret-row', form).forEach(function (r) { var p = pickers[r.dataset.id] = photoPicker(r.querySelector('.ret-photos'), 'return', { min: 1, max: 3 }); p.onchange = refresh; });
+    form.addEventListener('change', function (e) { if (e.target.name === 'pick') { e.target.closest('.ret-row').classList.toggle('off', !e.target.checked); refresh(); } });
+    refresh();
     $('#retForm').addEventListener('change', function (e) {
       var n = e.target.name; if ((n === 'damaged' || n === 'lost') && e.target.checked) {
         var other = e.target.closest('.ret-row').querySelector('[name=' + (n === 'damaged' ? 'lost' : 'damaged') + ']'); other.checked = false;
@@ -593,14 +694,15 @@
       var items = $$('.ret-row', e.target).filter(function (r) { return r.querySelector('[name=pick]').checked; }).map(function (r) {
         var cond = r.querySelector('[name=cond]').value.trim(), dmg = r.querySelector('[name=damaged]').checked, lost = r.querySelector('[name=lost]').checked;
         // Backend requires a non-empty conditionIn → default to the flag the user ticked.
-        return { assetId: r.dataset.id, conditionIn: cond || (lost ? 'สูญหาย' : dmg ? 'เสียหาย' : 'ปกติ'), damaged: dmg, lost: lost, note: cond };
+        return { assetId: r.dataset.id, conditionIn: cond || (lost ? 'สูญหาย' : dmg ? 'เสียหาย' : 'ปกติ'), damaged: dmg, lost: lost, note: cond, photoIds: pickers[r.dataset.id].ids() };
       });
       if (!items.length) { toast('เลือกอย่างน้อย 1 ชิ้น', true); return; }
+      if (items.some(function (i) { return !i.photoIds.length; }) || items.some(function (i) { return pickers[i.assetId].busy(); })) { toast('ทุกชิ้นที่คืนต้องมีรูปอย่างน้อย 1 รูป (รอให้อัปเสร็จ)', true); return; }
       btn.disabled = true;
       apiPost('loan_return', { loanId: l.loanId, items: items }).then(function (r) {
         var done = r.loan && r.loan.status === 'returned';
         toast(done ? (loanHasLost(r.loan) ? 'ปิดใบแล้ว (มีของสูญหาย) · ' : 'คืนครบแล้ว · ') + l.loanId : 'บันทึกแล้ว ' + items.length + ' ชิ้น'); closeSheet(); return reload();
-      }).catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
+      }).catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { refresh(); });
     });
   }
 
@@ -714,6 +816,39 @@
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'CP-ProductionInventory-' + name + '-' + today() + '.csv'; document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  });
+
+  /* ---------- settings: categories (contract §15) ---------- */
+  function renderSettings() {
+    if (!S.me || !P().assetManage) { $('#catList').innerHTML = ''; return; }
+    var count = {}; S.assets.forEach(function (a) { count[a.category] = (count[a.category] || 0) + 1; });
+    $('#catList').innerHTML = cats().map(function (c) {
+      return '<li class="item" data-cat="' + esc(c.code) + '"><div class="main" style="cursor:default"><div><span class="id">' + esc(c.code) + '</span> ' + esc(c.name) + '</div>' +
+        '<div class="meta">อุปกรณ์ ' + (count[c.code] || 0) + ' ชิ้น</div></div><div class="side">' + (c.active ? pill('available', 'ใช้งาน') : pill('retired', 'ปิดใช้')) +
+        '<div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-cat-edit>แก้ชื่อ</button><button class="btn sm' + (c.active ? ' danger' : '') + '" data-cat-toggle>' + (c.active ? 'ปิดใช้' : 'เปิดใช้') + '</button></div></div></li>';
+    }).join('');
+  }
+  function saveCategory(code, name, active, okMsg) {
+    return apiPost('category_upsert', { code: code, name: name, active: active }).then(function () { toast(okMsg); return reload(); }).catch(function (r) { toast(errText(r), true); });
+  }
+  $('#catList').addEventListener('click', function (e) {
+    var li = e.target.closest('[data-cat]'); if (!li) return; var c = cats().find(function (x) { return x.code === li.dataset.cat; }); if (!c) return;
+    if (e.target.closest('[data-cat-edit]')) {
+      var n = prompt('ชื่อหมวด ' + c.code, c.name); if (n === null) return; n = n.trim(); if (!n) { toast('ต้องระบุชื่อหมวด', true); return; }
+      saveCategory(c.code, n.slice(0, 40), c.active, 'บันทึกชื่อหมวดแล้ว');
+    }
+    if (e.target.closest('[data-cat-toggle]')) {
+      if (c.active && !confirm('ปิดใช้หมวด ' + c.code + '? อุปกรณ์เดิมยังอยู่ แต่เพิ่มอุปกรณ์ใหม่ในหมวดนี้ไม่ได้')) return;
+      saveCategory(c.code, c.name, !c.active, c.active ? 'ปิดใช้หมวดแล้ว' : 'เปิดใช้หมวดแล้ว');
+    }
+  });
+  $('#catForm').code.addEventListener('input', function () { this.value = this.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); });
+  $('#catForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target, code = f.code.value.trim(), name = f.name.value.trim();
+    if (!/^[A-Z]{2,4}$/.test(code)) { toast('รหัสหมวดต้องเป็น A–Z 2–4 ตัว', true); return; }
+    if (cats().some(function (c) { return c.code === code; })) { toast('มีรหัสหมวดนี้แล้ว', true); return; }
+    var btn = f.querySelector('[type=submit]'); btn.disabled = true;
+    saveCategory(code, name, true, 'เพิ่มหมวด ' + code + ' แล้ว').then(function () { f.reset(); }).finally(function () { btn.disabled = false; });
   });
 
   /* ---------- users tab: invites / people / roles (contract §13) ---------- */
