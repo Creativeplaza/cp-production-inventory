@@ -912,6 +912,22 @@
   $('#overlay').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSheet(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#overlay').hidden) closeSheet(); });
 
+  /* ---------- tap ripple on everything clickable ---------- */
+  var TAP = '.btn,.chip,.nav-item,.stat,.side-card,.seg button,.fab,.icon-btn,.ph-t,.ph-add,.link-btn,.item .main';
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.addEventListener('pointerdown', function (e) {
+    if (reduceMotion || e.button > 0) return;
+    var t = e.target.closest(TAP); if (!t || t.disabled) return;
+    var host = t.matches('.item .main') ? t.closest('.item') : t;
+    host.classList.add('tap-host');
+    var wrap = host.querySelector(':scope > .rpl-wrap');
+    if (!wrap) { wrap = document.createElement('span'); wrap.className = 'rpl-wrap'; host.appendChild(wrap); }
+    var r = host.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2, s = document.createElement('span');
+    s.className = 'rpl'; s.style.width = s.style.height = d + 'px';
+    s.style.left = (e.clientX - r.left - d / 2) + 'px'; s.style.top = (e.clientY - r.top - d / 2) + 'px';
+    wrap.appendChild(s); setTimeout(function () { s.remove(); }, 600);
+  }, { passive: true });
+
   /* ---------- start ---------- */
   document.addEventListener('visibilitychange', function () { if (!document.hidden && S.me && $('#overlay').hidden) reload().catch(function () {}); });
   S.tab = 'assets';
