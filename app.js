@@ -906,12 +906,22 @@
     var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
+  var csvSeq = 0;
   function saveCsv(csv, filename) {
     var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     if (!window.showSaveFilePicker) { downloadCsv(blob, filename); return; }
+    var g = S.gen, dg = S.dataGen;
     window.showSaveFilePicker({ id: 'cpi-reports', startIn: 'downloads', suggestedName: filename, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] })
-      .then(function (h) { return h.createWritable().then(function (w) { return w.write(blob).then(function () { return w.close(); }); }).then(function () { toast('บันทึก ' + h.name + ' แล้ว'); }); })
-      .catch(function (e) { if (e && e.name === 'AbortError') return; downloadCsv(blob, filename); });
+      .then(function (h) {
+        if (g !== S.gen || dg !== S.dataGen) return; // logged out / data reloaded while the dialog was open
+        return h.createWritable().then(function (w) { return w.write(blob).then(function () { return w.close(); }); }).then(function () { toast('บันทึก ' + h.name + ' แล้ว'); });
+      })
+      .catch(function (e) {
+        if (e && e.name === 'AbortError') return; // user cancelled → nothing
+        if (g !== S.gen || dg !== S.dataGen) return;
+        if (e && (e.name === 'SecurityError' || e.name === 'NotAllowedError')) { downloadCsv(blob, filename); return; } // no dialog allowed here
+        toast('บันทึกไฟล์ไม่สำเร็จ: ' + (e && e.message || e), true);
+      });
   }
   $('#btnCsv').addEventListener('click', function () {
     var btn = this;
@@ -922,16 +932,19 @@
       var dg = S.dataGen; btn.disabled = true;
       loadAllLoans().then(function () {
         btn.disabled = false; if (dg !== S.dataGen) return;
-        renderReport(); btn.click();
+        renderReport();
+        // A Save-as dialog needs a fresh user click (the original click's activation is gone after the
+        // async load), so ask for a second click there; plain downloads can continue straight away.
+        if (window.showSaveFilePicker) toast('โหลดประวัติครบแล้ว — กด Export CSV อีกครั้งเพื่อบันทึก'); else btn.click();
       }).catch(function (e) { btn.disabled = false; if (dg === S.dataGen) toast('Export ไม่ได้ — โหลดประวัติไม่ครบ: ' + errText(e), true); });
       return;
     }
     var r = reportRows();
     var csv = '﻿' + [r.head].concat(r.rows).map(function (row) { return row.map(csvCell).join(','); }).join('\r\n');
     var name = { register: 'ทะเบียนทรัพย์สิน', history: 'ประวัติเบิกคืน', overdue: 'ค้างคืน' }[S.report];
-    // Unique name per export (Bangkok date + time to the second) so repeated exports never overwrite each other.
-    var stamp = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '');
-    saveCsv(csv, 'CP-ProductionInventory-' + name + '-' + stamp + '.csv');
+    // Unique name per export: Bangkok date-time to the millisecond + a per-page counter → never overwrites.
+    var iso = new Date(Date.now() + 7 * 3600e3).toISOString(), stamp = iso.slice(0, 10) + '_' + iso.slice(11, 19).replace(/:/g, '') + '-' + iso.slice(20, 23);
+    saveCsv(csv, 'CP-ProductionInventory-' + name + '-' + stamp + '-' + (++csvSeq) + '.csv');
   });
 
   /* ---------- settings: categories (contract §15) ---------- */
