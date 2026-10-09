@@ -74,15 +74,25 @@
   }
   // Session generation guard: S.gen changes on every login/logout. A response that comes back for an older
   // generation is dropped (never settles), so late data/401s can't repopulate state or log out a newer session.
+  // Thin top progress bar while any request is in flight (the API is slow → show that work is happening).
+  var inflight = 0, barTimer = null;
+  function busy(delta) {
+    inflight = Math.max(0, inflight + delta);
+    var bar = $('#topProgress');
+    if (inflight && !barTimer && bar.hidden) barTimer = setTimeout(function () { barTimer = null; if (inflight) bar.hidden = false; }, 150);
+    if (!inflight) { clearTimeout(barTimer); barTimer = null; bar.hidden = true; }
+  }
   function send(b, retried, gen) {
     if (gen === undefined) gen = S.gen;
     if (NOT_CONFIGURED) return Promise.reject({ code: 'NOT_CONFIGURED', error: 'ระบบยังไม่ได้ตั้งค่า' });
+    busy(1);
     var p = USE_MOCK ? window.CPI_MOCK.post(b)
       : fetchJson(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(b) });
     return p.then(function (r) { return { r: r }; }, function (e) {
       if (gen === S.gen && !retried && b.action !== 'login' && e && e.network) return send(b, true, gen).then(function (r) { return { r: r }; }, function (e2) { return { e: e2 }; });
       return { e: e };
     }).then(function (o) {
+      busy(-1);
       if (gen !== S.gen) return new Promise(function () {});
       if (o.e) throw o.e;
       return check(o.r);
@@ -148,7 +158,7 @@
     if (btn.disabled) return;
     btn.disabled = true; $('#loginErr').textContent = '';
     send({ action: 'login', username: f.username.value.trim().toLowerCase(), pin: f.pin.value }, true).then(function (r) {
-      S.gen++; S.token = r.token; store('cpi_token', r.token); loginPin.clear(); boot();
+      S.gen++; S.token = r.token; store('cpi_token', r.token); loginPin.clear(); switchTab('assets'); boot();
     }).catch(function (r) { loginPin.clear(); loginPin.focus(); $('#loginErr').textContent = r && r.status === 429 ? ERR_TEXT.RATE_LIMITED : errText(r); })
       .finally(function () { btn.disabled = false; });
   });
@@ -205,7 +215,15 @@
   $('#btnLogout').addEventListener('click', function () { if (confirm('ออกจากระบบ?')) logout(false); });
 
   /* ---------- load ---------- */
+  function skeleton() {
+    var card = '<li class="item skel"><span class="sk sk-box"></span><div class="main"><span class="sk sk-line w60"></span><span class="sk sk-line w35"></span></div><span class="sk sk-pill"></span></li>';
+    $('#stats').innerHTML = new Array(5).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
+    $('#assetList').innerHTML = $('#loanList').innerHTML = new Array(7).join(card);
+    $('#usersBody').innerHTML = '<ul class="list">' + new Array(5).join(card) + '</ul>';
+  }
   function boot() {
+    // Show the app shell with skeletons right away; the first bundle can take several seconds.
+    if (!S.me) { skeleton(); $('#login').hidden = true; $('#app').hidden = false; $('#app').classList.add('app-enter'); }
     return reload().then(function () {
       $('#login').hidden = true; $('#app').hidden = false;
       var deep = new URLSearchParams(location.search).get('a');
@@ -220,7 +238,8 @@
       // Fail closed: anything but an explicit false means the bundle may not hold every loan.
       S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
       S.cart = S.cart.filter(function (id) { var a = assetById(id); return a && a.status === 'available'; });
-      renderAll();
+      var first = !$('#assetList').querySelector('.item:not(.skel)');
+      renderAll(); if (first) stagger();
     });
   }
   function assetById(id) { return S.assets.find(function (a) { return a.assetId === id; }); }
@@ -257,9 +276,18 @@
     $$('.side-nav [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x.dataset.tab === t)); });
     ['assets', 'loans', 'report', 'users'].forEach(function (x) { $('#tab-' + x).hidden = x !== t; });
     $('#pageTitle').textContent = TAB_TITLES[t] || '';
+    replay($('#tab-' + t), 'page-enter'); replay($('#pageTitle'), 'title-enter'); stagger();
     $('#cartBar').hidden = t !== 'assets' || !S.cart.length;
     if (t === 'users' && S.me) loadUsersTab();
     try { sessionStorage.setItem('cpi_tab', t); } catch (e) {}
+  }
+  // Restart a CSS entrance animation on an element.
+  function replay(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  // Cards cascade in on the next render of the lists (tab switch / fresh data), not on every filter keystroke.
+  var staggerT = null;
+  function stagger() {
+    ['#assetList', '#loanList', '#usersBody'].forEach(function (s) { replay($(s), 'stagger'); });
+    clearTimeout(staggerT); staggerT = setTimeout(function () { ['#assetList', '#loanList', '#usersBody'].forEach(function (s) { $(s).classList.remove('stagger'); }); }, 900);
   }
   function setCollapsed(on) { $('#app').classList.toggle('collapsed', on); store('cpi_side', on ? '1' : null); }
   $('#btnCollapse').addEventListener('click', function () {
@@ -859,9 +887,18 @@
     S.modal++;
     if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
     $('#sheetTitle').textContent = title; $('#sheetBody').innerHTML = html; $('#sheetBody').onclick = null;
-    $('#overlay').hidden = false; onSheetClose = onClose || null;
+    clearTimeout(sheetHideT); $('#overlay').classList.remove('closing');
+    if ($('#overlay').hidden) { $('#overlay').hidden = false; replay($('#overlay'), 'opening'); }
+    onSheetClose = onClose || null;
   }
-  function closeSheet() { S.modal++; $('#overlay').hidden = true; $('#sheetBody').innerHTML = ''; if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); } }
+  var sheetHideT = null;
+  function closeSheet() {
+    S.modal++; if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
+    var ov = $('#overlay'); if (ov.hidden) return;
+    ov.classList.remove('opening'); ov.classList.add('closing');
+    clearTimeout(sheetHideT);
+    sheetHideT = setTimeout(function () { ov.hidden = true; ov.classList.remove('closing'); $('#sheetBody').innerHTML = ''; }, 180);
+  }
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#overlay').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSheet(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#overlay').hidden) closeSheet(); });

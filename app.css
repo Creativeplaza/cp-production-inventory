@@ -226,7 +226,49 @@ tbody tr:last-child td{border-bottom:0}
 .toast.show{opacity:1;transform:translateX(-50%)}
 .toast.err{background:var(--bad);color:#fff}
 
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* ---------- motion ---------- */
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes sheetUp{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
+@keyframes sheetDown{from{transform:none;opacity:1}to{transform:translateY(40px);opacity:0}}
+@keyframes popIn{from{transform:scale(.96);opacity:0}to{transform:none;opacity:1}}
+@keyframes popOut{from{transform:none;opacity:1}to{transform:scale(.97);opacity:0}}
+@keyframes shimmer{from{background-position:-200% 0}to{background-position:200% 0}}
+@keyframes progress{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+.page-enter{animation:fadeUp .28s cubic-bezier(.2,.7,.2,1) both}
+.title-enter{animation:fadeUp .24s cubic-bezier(.2,.7,.2,1) both}
+.app-enter{animation:fadeIn .25s ease both}
+.stagger>li,.stagger>.list>li{animation:fadeUp .32s cubic-bezier(.2,.7,.2,1) both}
+.stagger>li:nth-child(2),.stagger>.list>li:nth-child(2){animation-delay:30ms}
+.stagger>li:nth-child(3),.stagger>.list>li:nth-child(3){animation-delay:60ms}
+.stagger>li:nth-child(4),.stagger>.list>li:nth-child(4){animation-delay:90ms}
+.stagger>li:nth-child(5),.stagger>.list>li:nth-child(5){animation-delay:120ms}
+.stagger>li:nth-child(6),.stagger>.list>li:nth-child(6){animation-delay:150ms}
+.stagger>li:nth-child(7),.stagger>.list>li:nth-child(7){animation-delay:180ms}
+.stagger>li:nth-child(n+8),.stagger>.list>li:nth-child(n+8){animation-delay:210ms}
+.overlay.opening{animation:fadeIn .2s ease both}
+.overlay.opening .sheet{animation:sheetUp .26s cubic-bezier(.2,.8,.2,1) both}
+.overlay.closing{animation:fadeIn .18s ease reverse both}
+.overlay.closing .sheet{animation:sheetDown .18s ease-in both}
+@media (min-width:700px){.overlay.opening .sheet{animation-name:popIn}.overlay.closing .sheet{animation-name:popOut}}
+.btn,.chip,.nav-item,.fab,.stat,.icon-btn,.side-card{transition:transform .12s ease,background .15s,border-color .15s,box-shadow .2s,color .15s}
+.btn:active,.chip:active,.icon-btn:active,.side-card:active{transform:scale(.97)}
+.fab:active{transform:scale(.94)}
+.nav-item:active{transform:scale(.985)}
+.item{transition:transform .18s ease,box-shadow .2s ease,border-color .15s}
+@media (hover:hover){.item:hover{transform:translateY(-1px);box-shadow:var(--shadow),0 16px 30px -22px rgba(30,30,40,.35)}.stat:hover{transform:translateY(-1px)}}
+.sidebar .nav-item[aria-selected=true]{transition:background .25s ease,box-shadow .25s ease,color .2s}
+/* skeleton */
+.skel{pointer-events:none}
+.sk{display:block;border-radius:8px;background:linear-gradient(90deg,rgba(17,17,20,.06) 25%,rgba(17,17,20,.12) 37%,rgba(17,17,20,.06) 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite}
+.sk-box{width:22px;height:22px;flex:none;border-radius:6px}
+.sk-line{height:12px;margin:4px 0 8px}.w60{width:60%}.w50{width:50%}.w35{width:35%}
+.sk-pill{width:56px;height:20px;border-radius:999px;flex:none}
+.sk-num{width:36px;height:26px;margin-bottom:8px}
+/* top progress */
+.top-progress{position:fixed;left:0;right:0;top:0;height:3px;z-index:70;overflow:hidden;background:rgba(98,0,175,.12)}
+.top-progress::after{content:'';position:absolute;top:0;bottom:0;width:40%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:progress 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
 /* A4 QR labels: 5 × 9 labels of 38 × 30 mm (always black on white) */
 .print-area{display:none}

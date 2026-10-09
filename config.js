@@ -8,3 +8,5 @@ window.CPI_CONFIG = {
   COMPANY: 'Creative Plaza',
   TZ: 'Asia/Bangkok'
 };
+// Dev only: on a local host, ?mock=1 swaps the live API for the local mock (never on a deployed origin).
+if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && /[?&]mock=1\b/.test(location.search)) window.CPI_CONFIG.API_URL = '';
