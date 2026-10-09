@@ -216,7 +216,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
+    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -664,11 +664,12 @@
     });
     show(0);
   }
-  // Full photos: one request per photo per session, small LRU (each can be ~1.4 MB).
+  // Full photos: one request per photo per session, LRU of 12 cached promises (each can be ~1.4 MB). This bounds
+  // the cache only — images already painted in an open gallery/lightbox are held by the DOM until it closes.
   var fullCache = {}, fullOrder = [], fullGen = -1;
   function fullPhoto(id) {
     if (fullGen !== S.gen) { fullCache = {}; fullOrder = []; fullGen = S.gen; }
-    if (fullCache[id]) return fullCache[id];
+    if (fullCache[id]) { fullOrder = fullOrder.filter(function (k) { return k !== id; }); fullOrder.push(id); return fullCache[id]; }
     var g = S.gen, pr = apiGet('getPhoto', { photoId: id }).then(function (r) {
       var p = r.photo || {};
       return /^image\/(jpeg|png|webp)$/.test(p.mime) && /^[A-Za-z0-9+\/=]+$/.test(p.data || '') ? 'data:' + p.mime + ';base64,' + p.data : '';
@@ -681,11 +682,13 @@
   // Full photo in a lightbox (separate from the sheet so the detail stays open); ‹ › / arrow keys / swipe
   // move within the group it was opened from. Each open/step/close/logout bumps lbGen; a full-photo
   // response only lands if its own showing is still current.
-  var lbGen = 0, lbList = [], lbIdx = 0, lbSwiped = false, lbX = null;
+  var lbGen = 0, lbList = [], lbIdx = 0, lbSwiped = false, lbX = null, lbSwipeT = null, lbReturn = null;
+  function resetLbTouch() { lbX = null; lbSwiped = false; clearTimeout(lbSwipeT); }
   function openPhoto(id, thumb, list) {
     lbList = list && list.length ? list : [{ id: id, thumb: thumb }];
     lbIdx = Math.max(0, lbList.map(function (x) { return x.id; }).indexOf(id));
-    var lb = $('#lightbox'); lb.hidden = false; replay(lb, 'opening'); showLb();
+    var lb = $('#lightbox'); if (lb.hidden) lbReturn = document.activeElement;
+    resetLbTouch(); lb.hidden = false; replay(lb, 'opening'); showLb(); lb.focus({ preventScroll: true });
   }
   function showLb() {
     var it = lbList[lbIdx], img = $('#lightboxImg'), mine = ++lbGen, many = lbList.length > 1;
@@ -696,7 +699,11 @@
       .catch(function (e) { if (mine === lbGen) toast(errText(e), true); });
   }
   function stepLb(d) { var i = lbIdx + d; if ($('#lightbox').hidden || i < 0 || i >= lbList.length) return; lbIdx = i; showLb(); }
-  function closePhoto() { lbGen++; lbList = []; $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src'); }
+  function closePhoto() {
+    var wasOpen = !$('#lightbox').hidden;
+    lbGen++; lbList = []; resetLbTouch(); $('#lightbox').hidden = true; $('#lightboxImg').removeAttribute('src');
+    var r = lbReturn; lbReturn = null; if (wasOpen && r && r.isConnected && r.focus) r.focus({ preventScroll: true });
+  }
   $('#lightbox').addEventListener('click', function (e) {
     if (lbSwiped) { lbSwiped = false; return; }
     var nav = e.target.closest('.lb-nav'); if (nav) { stepLb(nav.id === 'lbPrev' ? -1 : 1); return; }
@@ -705,8 +712,9 @@
   $('#lightbox').addEventListener('touchstart', function (e) { lbX = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
   $('#lightbox').addEventListener('touchend', function (e) {
     if (lbX == null) return; var dx = e.changedTouches[0].clientX - lbX; lbX = null;
-    if (Math.abs(dx) > 40) { lbSwiped = true; setTimeout(function () { lbSwiped = false; }, 400); stepLb(dx < 0 ? 1 : -1); }
+    if (Math.abs(dx) > 40) { lbSwiped = true; clearTimeout(lbSwipeT); lbSwipeT = setTimeout(function () { lbSwiped = false; }, 400); stepLb(dx < 0 ? 1 : -1); }
   });
+  $('#lightbox').addEventListener('touchcancel', resetLbTouch, { passive: true });
   document.addEventListener('click', function (e) {
     var t = e.target.closest('[data-photo]'); if (!t) return;
     var grp = t.closest('[data-gallery], .ph-strip'), nodes = grp ? $$('[data-photo]', grp) : [t];
@@ -987,15 +995,22 @@
   function saveCsv(csv, filename) {
     var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     if (!window.showSaveFilePicker) { downloadCsv(blob, filename); return; }
-    var g = S.gen, dg = S.dataGen;
+    var g = S.gen, dg = S.dataGen, STALE = { name: 'StaleExport' };
+    function stale() { return g !== S.gen || dg !== S.dataGen; }
     window.showSaveFilePicker({ id: 'cpi-reports', startIn: 'downloads', suggestedName: filename, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] })
       .then(function (h) {
-        if (g !== S.gen || dg !== S.dataGen) return; // logged out / data reloaded while the dialog was open
-        return h.createWritable().then(function (w) { return w.write(blob).then(function () { return w.close(); }); }).then(function () { toast('บันทึก ' + h.name + ' แล้ว'); });
+        if (stale()) return; // logged out / data reloaded while the dialog was open
+        return h.createWritable().then(function (w) {
+          // Re-check after every await: a logout/reload meanwhile aborts the writable, so the chosen
+          // file keeps its previous content and the old report is never committed.
+          function bail(e) { return Promise.resolve(w.abort && w.abort()).catch(function () {}).then(function () { throw e; }); }
+          if (stale()) return bail(STALE);
+          return w.write(blob).then(function () { if (stale()) return bail(STALE); return w.close(); }, bail);
+        }).then(function () { if (!stale()) toast('บันทึก ' + h.name + ' แล้ว'); });
       })
       .catch(function (e) {
+        if (e === STALE || stale()) return;
         if (e && e.name === 'AbortError') return; // user cancelled → nothing
-        if (g !== S.gen || dg !== S.dataGen) return;
         if (e && (e.name === 'SecurityError' || e.name === 'NotAllowedError')) { downloadCsv(blob, filename); return; } // no dialog allowed here
         toast('บันทึกไฟล์ไม่สำเร็จ: ' + (e && e.message || e), true);
       });
@@ -1253,7 +1268,8 @@
   $('#overlay').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSheet(); });
   document.addEventListener('keydown', function (e) {
     if (!$('#lightbox').hidden) {
-      if (e.key === 'Escape') closePhoto(); else if (e.key === 'ArrowLeft') stepLb(-1); else if (e.key === 'ArrowRight') stepLb(1);
+      var k = { Escape: 0, ArrowLeft: -1, ArrowRight: 1 }[e.key]; if (k == null) return;
+      e.preventDefault(); if (k === 0) closePhoto(); else stepLb(k);
       return;
     }
     if (e.key === 'Escape' && !$('#overlay').hidden) closeSheet();
