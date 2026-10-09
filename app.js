@@ -85,14 +85,19 @@
   function send(b, retried, gen) {
     if (gen === undefined) gen = S.gen;
     if (NOT_CONFIGURED) return Promise.reject({ code: 'NOT_CONFIGURED', error: 'ระบบยังไม่ได้ตั้งค่า' });
+    // busy() is balanced per transport attempt: released as soon as THIS attempt settles, before any retry
+    // or generation drop, so a dropped/never-settling chain can't leave the progress bar stuck.
     busy(1);
-    var p = USE_MOCK ? window.CPI_MOCK.post(b)
-      : fetchJson(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(b) });
-    return p.then(function (r) { return { r: r }; }, function (e) {
+    var p;
+    try {
+      p = USE_MOCK ? window.CPI_MOCK.post(b)
+        : fetchJson(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(b) });
+    } catch (e) { busy(-1); return Promise.reject({ error: 'เกิดข้อผิดพลาด' }); }
+    return p.then(function (r) { busy(-1); return { r: r }; }, function (e) {
+      busy(-1);
       if (gen === S.gen && !retried && b.action !== 'login' && e && e.network) return send(b, true, gen).then(function (r) { return { r: r }; }, function (e2) { return { e: e2 }; });
       return { e: e };
     }).then(function (o) {
-      busy(-1);
       if (gen !== S.gen) return new Promise(function () {});
       if (o.e) throw o.e;
       return check(o.r);
@@ -208,7 +213,7 @@
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
     S.users = []; S.invites = []; S.roles = []; closeDrawer();
-    closeSheet(); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
+    closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
   }
@@ -887,17 +892,21 @@
     S.modal++;
     if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
     $('#sheetTitle').textContent = title; $('#sheetBody').innerHTML = html; $('#sheetBody').onclick = null;
-    clearTimeout(sheetHideT); $('#overlay').classList.remove('closing');
+    clearTimeout(sheetHideT); $('#overlay').classList.remove('closing'); $('#overlay').inert = false;
     if ($('#overlay').hidden) { $('#overlay').hidden = false; replay($('#overlay'), 'opening'); }
     onSheetClose = onClose || null;
   }
   var sheetHideT = null;
-  function closeSheet() {
+  // immediate=true (logout / session expiry): hide and clear right away, no exit animation.
+  function closeSheet(immediate) {
     S.modal++; if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
-    var ov = $('#overlay'); if (ov.hidden) return;
+    var ov = $('#overlay'); clearTimeout(sheetHideT);
+    function done() { ov.hidden = true; ov.inert = false; ov.classList.remove('closing', 'opening'); $('#sheetBody').innerHTML = ''; }
+    if (ov.hidden) { $('#sheetBody').innerHTML = ''; return; }
+    if (immediate === true) { done(); return; }
+    ov.inert = true; // the closing sheet's forms/buttons stay in the DOM for 180 ms — make them non-interactive
     ov.classList.remove('opening'); ov.classList.add('closing');
-    clearTimeout(sheetHideT);
-    sheetHideT = setTimeout(function () { ov.hidden = true; ov.classList.remove('closing'); $('#sheetBody').innerHTML = ''; }, 180);
+    sheetHideT = setTimeout(done, 180);
   }
   $('#sheetClose').addEventListener('click', closeSheet);
   $('#overlay').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeSheet(); });
