@@ -837,6 +837,10 @@
   function initGallery(el, mg) {
     if (!el) return;
     var track = el.querySelector('.gal-track'), slides = track.children, n = slides.length, idx = -1;
+    // The frame takes the shape of the photo on screen (full width, natural aspect, capped by max-height).
+    function fit() { var sl = slides[idx]; if (sl && sl.offsetHeight) track.style.height = sl.offsetHeight + 'px'; }
+    Array.prototype.forEach.call(slides, function (sl, i) { sl.querySelector('img').addEventListener('load', function () { if (i === idx) fit(); }); });
+    window.addEventListener('resize', function onR() { if (!el.isConnected) { window.removeEventListener('resize', onR); return; } fit(); });
     function upgrade(i) {
       var sl = slides[i]; if (!sl || sl.dataset.full) return; sl.dataset.full = '1';
       fullPhoto(sl.dataset.photo).then(function (src) {
@@ -844,7 +848,7 @@
       }).catch(function () { delete sl.dataset.full; });
     }
     function show(i) {
-      if (i === idx) return; idx = i; upgrade(i); if (i + 1 < n) upgrade(i + 1);
+      if (i === idx) return; idx = i; upgrade(i); if (i + 1 < n) upgrade(i + 1); fit();
       if (n < 2) return;
       el.querySelector('.gal-count').textContent = (i + 1) + ' / ' + n;
       el.querySelector('.gal-nav.prev').disabled = i === 0; el.querySelector('.gal-nav.next').disabled = i === n - 1;
