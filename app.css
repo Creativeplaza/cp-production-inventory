@@ -424,3 +424,6 @@ tbody tr:last-child td{border-bottom:0}
 .seg.has-pill button[aria-pressed=true]{background:transparent;box-shadow:none}
 .shell.collapsed .nav-blob{display:none}
 .hidden-note{list-style:none;text-align:center;padding:4px 0}.hidden-note .link-btn{color:var(--accent-text);font-weight:600}
+
+/* cached bundle shown while the fresh one loads: provisional, say so */
+.sync-note{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:69;padding:6px 14px;border-radius:999px;font-size:13px;color:var(--text);background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--line-hi);box-shadow:0 8px 24px -12px rgba(20,20,30,.35);animation:fadeIn .25s ease both}

@@ -79,7 +79,10 @@
   function apiPost(action, body) {
     var g = S.gen;
     return send(Object.assign({ action: action, token: S.token || '', requestId: uuid() }, body || {}), false)
-      .then(function (r) { if (g === S.gen) applyLocal(action, body || {}, r); return r; });
+      .then(function (r) {
+        if (g === S.gen && action !== 'photo_upload') { dropBundle(); S.patchSeq++; applyLocal(action, body || {}, r); } // any older bundle is now stale
+        return r;
+      });
   }
   // Show the result of a save at once (the follow-up bundle reload takes seconds); the reload still corrects everything.
   function applyLocal(action, body, r) {
@@ -91,7 +94,11 @@
       if (action === 'asset_delete') { S.assets = S.assets.filter(function (a) { return a.assetId !== body.assetId; }); hit = true; }
       if (action === 'category_delete') { S.categories = (S.categories || []).filter(function (c) { return c.code !== body.code; }); hit = true; }
       if (action === 'category_upsert') { upsert(S.categories = S.categories || [], 'code', { code: body.code, name: body.name, active: body.active !== false }); }
-      if (hit && S.me) renderAll();
+      if (hit) {
+        // acknowledged change: invalidate report caches/continuations and any bundle that was requested before it
+        S.dataGen++; allLoans = null; allLoansP = null;
+        if (S.me) renderAll();
+      }
     } catch (e) {}
   }
   // Session generation guard: S.gen changes on every login/logout. A response that comes back for an older
@@ -233,7 +240,7 @@
   function logout(expired) {
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
-    dropBundle(); S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
+    dropBundle(); $('#syncNote').hidden = true; S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
     S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
@@ -252,7 +259,7 @@
     // Show the app shell with skeletons right away; the first bundle can take several seconds.
     if (!S.me) {
       $('#login').hidden = true; $('#app').hidden = false; $('#app').classList.add('app-enter');
-      var c = cachedBundle(); try { if (c) applyBundle(c); else skeleton(); } catch (e) { dropBundle(); skeleton(); }
+      var c = cachedBundle(); try { if (c) { applyBundle(c); $('#syncNote').hidden = false; } else skeleton(); } catch (e) { dropBundle(); skeleton(); }
     }
     return reload().then(function () {
       $('#login').hidden = true; $('#app').hidden = false;
@@ -262,15 +269,33 @@
   }
   // Speed: the API takes several seconds per call, so the last bundle is kept in this browser (tied to the current
   // session token, removed on logout) and painted instantly on the next open while a fresh one loads.
-  var BUNDLE_KEY = 'cpi_bundle_v1';
-  function tokenTag() { return S.token ? S.token.slice(-16) : ''; }
+  // It is provisional (a banner says so until the fresh bundle lands); the server stays the authority for perms/stock.
+  // Bound to a digest of the whole session token; dropped on logout and after every acknowledged save.
+  var BUNDLE_KEY = 'cpi_bundle_v2', BUNDLE_MAX_AGE = 7 * 864e5;
+  function tokenTag() {
+    if (!S.token) return '';
+    var a = 0x811c9dc5, b = 0x9e3779b9; // two FNV-1a passes → 64-bit identity tag (binding, not secrecy)
+    for (var i = 0; i < S.token.length; i++) { var c = S.token.charCodeAt(i); a = Math.imul(a ^ c, 16777619); b = Math.imul(b ^ c, 2246822519); }
+    return (a >>> 0).toString(16) + (b >>> 0).toString(16) + ':' + S.token.length;
+  }
   function saveBundle(r) { try { var j = JSON.stringify({ tag: tokenTag(), at: Date.now(), r: r }); if (j.length < 2500000) localStorage.setItem(BUNDLE_KEY, j); } catch (e) {} }
   function cachedBundle() {
-    try { var c = JSON.parse(localStorage.getItem(BUNDLE_KEY) || 'null'); return c && c.tag && c.tag === tokenTag() && Date.now() - c.at < 7 * 864e5 ? c.r : null; } catch (e) { return null; }
+    try {
+      var c = JSON.parse(localStorage.getItem(BUNDLE_KEY) || 'null'), age = c && Date.now() - c.at;
+      if (!c || typeof c !== 'object' || !c.tag || c.tag !== tokenTag() || typeof c.at !== 'number' || !isFinite(c.at) || age < 0 || age > BUNDLE_MAX_AGE) return null;
+      var r = c.r; return r && typeof r === 'object' && r.me && Array.isArray(r.assets) && Array.isArray(r.loans) && Array.isArray(r.approvers) ? r : null;
+    } catch (e) { return null; }
   }
-  function dropBundle() { try { localStorage.removeItem(BUNDLE_KEY); } catch (e) {} }
+  function dropBundle() { try { localStorage.removeItem(BUNDLE_KEY); localStorage.removeItem('cpi_bundle_v1'); } catch (e) {} }
+  // A bundle requested before a save was acknowledged must not overwrite that save's local patch.
+  S.patchSeq = 0;
   function reload() {
-    return apiGet('bundle').then(function (r) { applyBundle(r); saveBundle(r); });
+    var seq = S.patchSeq, g = S.gen;
+    return apiGet('bundle').then(function (r) {
+      if (g !== S.gen) return;
+      if (seq !== S.patchSeq) return; // stale: a newer save landed meanwhile (its own reload follows)
+      applyBundle(r); saveBundle(r); $('#syncNote').hidden = true;
+    });
   }
   function applyBundle(r) {
     if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
