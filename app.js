@@ -1032,7 +1032,7 @@
   function deciderText(l) {
     if (l.status === 'pending') return ' · รออนุมัติ';
     var n = deciderName(l); if (!n) return '';
-    if (!l.approvedBy) return ' · ผู้อนุมัติ ' + esc(n); // older loan: named approver, decider not recorded
+    if (!l.approvedBy) return ' · ผู้อนุมัติ ' + esc(n) + delMark(l.approver); // older loan: named approver, decider not recorded
     return (l.status === 'rejected' ? ' · ปฏิเสธโดย ' : ' · อนุมัติโดย ') + esc(n) + delMark(l.approvedBy);
   }
   function loanCard(l) {
