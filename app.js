@@ -77,7 +77,22 @@
   }
   // Mutations are idempotent per requestId (contract §6) → one retry with the SAME requestId after a network failure is safe.
   function apiPost(action, body) {
-    return send(Object.assign({ action: action, token: S.token || '', requestId: uuid() }, body || {}), false);
+    var g = S.gen;
+    return send(Object.assign({ action: action, token: S.token || '', requestId: uuid() }, body || {}), false)
+      .then(function (r) { if (g === S.gen) applyLocal(action, body || {}, r); return r; });
+  }
+  // Show the result of a save at once (the follow-up bundle reload takes seconds); the reload still corrects everything.
+  function applyLocal(action, body, r) {
+    try {
+      var hit = false;
+      function upsert(list, key, item) { var i = list.findIndex(function (x) { return x[key] === item[key]; }); if (i >= 0) list[i] = item; else list.unshift(item); hit = true; }
+      if (r && r.asset && r.asset.assetId) upsert(S.assets, 'assetId', r.asset);
+      if (r && r.loan && r.loan.loanId) upsert(S.loans, 'loanId', r.loan);
+      if (action === 'asset_delete') { S.assets = S.assets.filter(function (a) { return a.assetId !== body.assetId; }); hit = true; }
+      if (action === 'category_delete') { S.categories = (S.categories || []).filter(function (c) { return c.code !== body.code; }); hit = true; }
+      if (action === 'category_upsert') { upsert(S.categories = S.categories || [], 'code', { code: body.code, name: body.name, active: body.active !== false }); }
+      if (hit && S.me) renderAll();
+    } catch (e) {}
   }
   // Session generation guard: S.gen changes on every login/logout. A response that comes back for an older
   // generation is dropped (never settles), so late data/401s can't repopulate state or log out a newer session.
@@ -218,7 +233,7 @@
   function logout(expired) {
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
-    S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
+    dropBundle(); S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
     S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
@@ -235,24 +250,37 @@
   }
   function boot() {
     // Show the app shell with skeletons right away; the first bundle can take several seconds.
-    if (!S.me) { skeleton(); $('#login').hidden = true; $('#app').hidden = false; $('#app').classList.add('app-enter'); }
+    if (!S.me) {
+      $('#login').hidden = true; $('#app').hidden = false; $('#app').classList.add('app-enter');
+      var c = cachedBundle(); try { if (c) applyBundle(c); else skeleton(); } catch (e) { dropBundle(); skeleton(); }
+    }
     return reload().then(function () {
       $('#login').hidden = true; $('#app').hidden = false;
       var deep = new URLSearchParams(location.search).get('a');
       if (deep) { history.replaceState(null, '', location.pathname); openAsset(deep); }
     }).catch(function (r) { if (r && r.status !== 401) toast(errText(r), true); if (!S.me) showLogin(); });
   }
+  // Speed: the API takes several seconds per call, so the last bundle is kept in this browser (tied to the current
+  // session token, removed on logout) and painted instantly on the next open while a fresh one loads.
+  var BUNDLE_KEY = 'cpi_bundle_v1';
+  function tokenTag() { return S.token ? S.token.slice(-16) : ''; }
+  function saveBundle(r) { try { var j = JSON.stringify({ tag: tokenTag(), at: Date.now(), r: r }); if (j.length < 2500000) localStorage.setItem(BUNDLE_KEY, j); } catch (e) {} }
+  function cachedBundle() {
+    try { var c = JSON.parse(localStorage.getItem(BUNDLE_KEY) || 'null'); return c && c.tag && c.tag === tokenTag() && Date.now() - c.at < 7 * 864e5 ? c.r : null; } catch (e) { return null; }
+  }
+  function dropBundle() { try { localStorage.removeItem(BUNDLE_KEY); } catch (e) {} }
   function reload() {
-    return apiGet('bundle').then(function (r) {
-      if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
-      S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : [];
-      if (Array.isArray(r.roles) && !S.users.length) S.roles = r.roles;
-      // Fail closed: anything but an explicit false means the bundle may not hold every loan.
-      S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
-      S.cart = S.cart.filter(function (id) { var a = assetById(id); return a && a.status === 'available'; });
-      var first = !$('#assetList').querySelector('.item:not(.skel)');
-      renderAll(); if (first) stagger();
-    });
+    return apiGet('bundle').then(function (r) { applyBundle(r); saveBundle(r); });
+  }
+  function applyBundle(r) {
+    if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
+    S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : [];
+    if (Array.isArray(r.roles) && !S.users.length) S.roles = r.roles;
+    // Fail closed: anything but an explicit false means the bundle may not hold every loan.
+    S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
+    S.cart = S.cart.filter(function (id) { var a = assetById(id); return a && a.status === 'available'; });
+    var first = !$('#assetList').querySelector('.item:not(.skel)');
+    renderAll(); if (first) stagger();
   }
   function assetById(id) { return S.assets.find(function (a) { return a.assetId === id; }); }
   function P() { return (S.me && S.me.perms) || {}; }
