@@ -17,7 +17,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0}
-html{touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html{overscroll-behavior-y:none;touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{
   background:
     radial-gradient(900px 600px at 85% -10%,rgba(98,0,175,.10),transparent 60%),
@@ -457,3 +457,13 @@ tbody tr:last-child td{border-bottom:0}
 .sk,.cover.loading,.hc-img.loading,.gallery.loading{background-size:250% 100%!important;animation-duration:2.6s!important;animation-timing-function:ease-in-out!important}
 .top-progress::after{animation-duration:2.4s!important;animation-timing-function:cubic-bezier(.45,0,.55,1)!important}
 .ph-spin{animation-duration:1.3s!important}
+
+/* pull-to-refresh indicator */
+.ptr{position:fixed;left:50%;top:0;z-index:72;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;pointer-events:none;opacity:0;transform:translate(-50%,-48px);background:rgba(255,255,255,.85);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border:1px solid var(--line-hi);box-shadow:var(--shadow);margin-top:env(safe-area-inset-top)}
+.ptr svg{width:20px;height:20px;fill:none;stroke:var(--muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:stroke .15s}
+.ptr.ready svg,.ptr.spin svg{stroke:var(--accent)}
+.ptr.back{transition:transform .32s cubic-bezier(.2,.8,.2,1),opacity .25s ease}
+.ptr.spin{transition:transform .2s ease}
+.ptr.spin svg{animation:ptrSpin 1.3s linear infinite}
+@keyframes ptrSpin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ptr.spin svg{animation:none}}

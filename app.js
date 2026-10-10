@@ -1506,6 +1506,64 @@
     wrap.appendChild(s); setTimeout(function () { s.remove(); }, 600);
   }, { passive: true });
 
+  /* ---------- touch gestures (owner): pull down to refresh, swipe in from the left edge to open the menu ---------- */
+  var MOBILE = window.matchMedia('(max-width: 859px)');
+  function gestureFree() { return S.me && !$('#app').hidden && $('#overlay').hidden && $('#lightbox').hidden; }
+  var ptr = document.createElement('div'); ptr.className = 'ptr'; ptr.setAttribute('aria-hidden', 'true');
+  ptr.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>';
+  document.body.appendChild(ptr);
+  var PTR_MAX = 110, PTR_GO = 72, pt = null, ptrBusy = false;
+  function ptrPull(d) {
+    var k = Math.min(1, d / PTR_GO);
+    ptr.style.transform = 'translate(-50%,' + (d - 48) + 'px) rotate(' + Math.round(d * 3) + 'deg)';
+    ptr.style.opacity = String(k); ptr.classList.toggle('ready', d >= PTR_GO);
+  }
+  function ptrReset() { ptr.classList.add('back'); ptr.style.transform = ''; ptr.style.opacity = ''; ptr.classList.remove('ready', 'spin');
+    setTimeout(function () { ptr.classList.remove('back'); }, 320); }
+  // Swipe-in drawer
+  var SIDE_W = 264, EDGE = 24, sw = null;
+  function sideAt(x) { var side = $('#side'); side.style.transition = 'none'; side.style.transform = 'translateX(' + (Math.min(0, x - SIDE_W)) + 'px)';
+    $('#scrim').hidden = false; $('#scrim').style.opacity = String(Math.max(0, Math.min(1, x / SIDE_W))); }
+  function sideEnd(open) { var side = $('#side'); side.style.transition = ''; side.style.transform = ''; $('#scrim').style.opacity = '';
+    if (open) openDrawer(); else closeDrawer(); }
+  document.addEventListener('touchstart', function (e) {
+    pt = sw = null;
+    if (e.touches.length !== 1 || !gestureFree()) return;
+    var t = e.touches[0], open = $('#side').classList.contains('open');
+    if (MOBILE.matches && (open || t.clientX <= EDGE)) { sw = { x: t.clientX, y: t.clientY, open: open, on: false }; return; }
+    if (!open && !ptrBusy && (window.scrollY || document.documentElement.scrollTop) <= 0) pt = { y: t.clientY, x: t.clientX, d: 0, on: false };
+  }, { passive: true });
+  document.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 1) { if (pt && pt.on) ptrReset(); if (sw && sw.on) sideEnd(sw.open); pt = sw = null; return; }
+    var t = e.touches[0];
+    if (sw) {
+      var dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+      if (!sw.on) { if (Math.abs(dx) < 8) return; if (Math.abs(dy) > Math.abs(dx) || (sw.open ? dx > 0 : dx < 0)) { sw = null; return; } sw.on = true; }
+      e.preventDefault(); sw.dx = dx; sideAt(sw.open ? SIDE_W + dx : dx);
+      return;
+    }
+    if (pt) {
+      var d = t.clientY - pt.y;
+      if (!pt.on) { if (d < 8) { if (d < -4 || Math.abs(t.clientX - pt.x) > 12) pt = null; return; } if (Math.abs(t.clientX - pt.x) > d) { pt = null; return; } pt.on = true; }
+      if ((window.scrollY || document.documentElement.scrollTop) > 0) { ptrReset(); pt = null; return; }
+      e.preventDefault(); pt.d = Math.min(PTR_MAX, d * 0.55); ptrPull(pt.d);
+    }
+  }, { passive: false });
+  function touchDone() {
+    if (sw && sw.on) { var dx = sw.dx || 0; sideEnd(sw.open ? dx > -SIDE_W / 3 : dx > SIDE_W / 3); }
+    sw = null;
+    if (pt && pt.on) {
+      if (pt.d >= PTR_GO && gestureFree()) {
+        ptrBusy = true; ptr.classList.add('spin'); ptr.style.transform = 'translate(-50%,' + (PTR_GO - 40) + 'px)'; ptr.style.opacity = '1';
+        var g = S.gen;
+        reload().catch(function (r) { if (g === S.gen) toast(errText(r), true); }).then(function () { ptrBusy = false; ptrReset(); });
+      } else ptrReset();
+    }
+    pt = null;
+  }
+  document.addEventListener('touchend', touchDone, { passive: true });
+  document.addEventListener('touchcancel', touchDone, { passive: true });
+
   /* ---------- start ---------- */
   document.addEventListener('visibilitychange', function () { if (!document.hidden && S.me && $('#overlay').hidden) reload().catch(function () {}); });
   S.tab = 'assets';
