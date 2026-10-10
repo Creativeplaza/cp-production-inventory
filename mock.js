@@ -59,7 +59,8 @@
   // v0.9 profile: public fields only (no hash/salt/role internals)
   function avatarOf(db, u) { var x = u.avatarPhotoId && db.photos.find(function (p) { return p.photoId === u.avatarPhotoId && p.status === 'attached'; }); return x ? x.thumb : ''; }
   function profileOf(db, u) { return { username: u.username, name: u.name, phone: u.phone || '', department: u.department || '', avatarThumb: avatarOf(db, u) }; }
-  function nameOf(db, un) { var u = db.users.find(function (x) { return x.username === un; }); return u ? u.name : un; }
+  function nameOf(db, un) { var u = db.users.find(function (x) { return x.username === un; }) || (db.deletedUsers || []).find(function (x) { return x.username === un; }); return u ? u.name : un; }
+  function takenName(db, un) { return db.users.some(function (x) { return x.username === un; }) || (db.deletedUsers || []).some(function (x) { return x.username === un; }); }
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
     var o = JSON.parse(JSON.stringify(l));
@@ -93,6 +94,7 @@
     if (api === 'me') return { success: true, user: { username: u.username, name: u.name, role: u.role }, perms: perms(u) };
     if (api === 'bundle') return { success: true, assets: db.assets.map(function (a) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; }); return Object.assign({}, a, { photoCount: ph.length, coverPhotoId: ph.length ? ph[0].photoId : '' }); }), loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
       approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }),
+      deletedUsers: (db.deletedUsers || []).map(function (x) { return { username: x.username, name: x.name }; }),
       people: db.users.filter(function (x) { return x.active; }).map(function (x) { return profileOf(db, x); }),
       me: Object.assign(profileOf(db, u), { role: u.role, perms: perms(u), avatarPhotoId: u.avatarPhotoId || '' }), serverTime: Date.now() };
     if (api === 'getAsset') {
@@ -141,7 +143,7 @@
       if (!valid) { if (db.badInvite.length >= 20) return err(429, 'RATE_LIMIT'); db.badInvite.push(t0); save(db); return err(400, 'INVITE_INVALID'); }
       var un = String(b.username || '').trim().toLowerCase();
       if (!/^[a-z0-9._-]{3,24}$/.test(un) || !String(b.name || '').trim() || !/^\d{4}$/.test(b.pin || '')) return err(400, 'ข้อมูลไม่ครบ');
-      if (db.users.some(function (x) { return x.username === un; })) return err(409, 'USER_EXISTS');
+      if (takenName(db, un)) return err(409, 'USER_EXISTS');
       var nu = { username: un, name: b.name.trim(), role: inv.role, active: true, pin: b.pin, lastLoginAt: new Date().toISOString() };
       db.users.push(nu); inv.uses++; inv.lastUsedAt = new Date().toISOString(); ev(db, un, 'register', '', '', '', inv.role, inv.inviteId, '');
       save(db); return { success: true, token: 'mock-' + un, user: { username: un, name: nu.name, role: nu.role } };
@@ -321,6 +323,24 @@
         loan.status = open ? 'partially_returned' : 'returned'; if (!open) loan.returnedAt = now;
         loan.updatedAt = now; save(db); return { success: true, loan: loanOut(db, loan) };
       }
+      case 'user_delete': {
+        // v0.11 §21: permanent delete, name kept for history, username never reused
+        if (!P.userManage) return err(403, 'FORBIDDEN');
+        var du = db.users.find(function (x) { return x.username === b.username; });
+        if (!du) return err(404, 'NOT_FOUND');
+        if (String(b.confirm || '').trim().toLowerCase() !== du.username) return err(400, 'CONFIRM_MISMATCH');
+        if (du.username === u.username) return err(403, 'SELF_DELETE');
+        if (!P.isAdmin && du.role === 'admin') return err(403, 'FORBIDDEN');
+        if (du.role === 'admin' && du.active && db.users.filter(function (x) { return x.active && x.role === 'admin'; }).length === 1) return err(409, 'LAST_ADMIN');
+        var openL = db.loans.filter(function (l) { return l.requester === du.username && ['pending', 'approved', 'checked_out', 'partially_returned'].indexOf(l.status) >= 0; }).map(function (l) { return l.loanId; });
+        var held = db.assets.filter(function (a) { return a.holder === du.username; }).map(function (a) { return a.assetId; });
+        if (openL.length || held.length) return err(409, 'USER_IN_USE', { loanIds: openL, assetIds: held });
+        db.deletedUsers = db.deletedUsers || [];
+        db.deletedUsers.push({ username: du.username, name: du.name, role: du.role, phone: du.phone || '', department: du.department || '', deletedAt: now, deletedBy: u.username });
+        db.photos.forEach(function (x) { if (x.kind === 'avatar' && x.photoId === du.avatarPhotoId && x.status === 'attached') x.status = 'detached'; });
+        db.users = db.users.filter(function (x) { return x !== du; });
+        ev(db, u.username, 'user_delete', '', '', '', '', du.username, rid); save(db); return { success: true };
+      }
       case 'user_create': case 'user_update': {
         if (!P.userManage) return err(403, 'FORBIDDEN');
         if (b.pin !== undefined && !/^\d{4}$/.test(b.pin)) return err(400, 'PIN ต้องเป็นตัวเลข 4 หลัก');
@@ -328,7 +348,7 @@
         var ex = db.users.find(function (x) { return x.username === b.username; });
         if (!P.isAdmin && (b.role === 'admin' || (ex && ex.role === 'admin'))) return err(403, 'FORBIDDEN');
         if (!P.isAdmin && b.username === u.username && (b.role !== undefined || b.active !== undefined)) return err(403, 'FORBIDDEN');
-        if (b.action === 'user_create') { if (ex) return err(409, 'USER_EXISTS'); db.users.push({ username: b.username, name: b.name, role: b.role, active: true, pin: b.pin }); }
+        if (b.action === 'user_create') { if (ex || takenName(db, b.username)) return err(409, 'USER_EXISTS'); db.users.push({ username: b.username, name: b.name, role: b.role, active: true, pin: b.pin }); }
         else {
           if (!ex) return err(404, 'NOT_FOUND');
           var admins = db.users.filter(function (x) { return x.active && x.role === 'admin'; });

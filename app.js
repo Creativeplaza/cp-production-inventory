@@ -49,8 +49,12 @@
     var t = p && safeThumb(p.avatarThumb);
     return t ? '<img alt="" src="' + esc(t) + '">' : esc(((p && (p.name || p.username)) || '?').trim().charAt(0).toUpperCase());
   }
+  // v0.11 §21: deleted accounts keep their name in history, marked (ลบแล้ว)
+  function deletedUser(un) { return (S.deletedUsers || []).find(function (x) { return x.username === un; }); }
+  function delMark(un) { return un && deletedUser(un) ? ' <span class="muted small">(ลบแล้ว)</span>' : ''; }
   function userName(un) {
     if (!un) return '–';
+    var du = deletedUser(un); if (du) return du.name + ' (ลบแล้ว)';
     if (S.me && un === S.me.username) return S.me.name;
     var pp = person(un); if (pp) return pp.name;
     var a = S.approvers.find(function (x) { return x.username === un; }); if (a) return a.name;
@@ -67,7 +71,8 @@
     SESSION_CAPACITY: 'มีผู้ใช้งานพร้อมกันเต็ม กรุณาลองใหม่ภายหลัง', NOT_CONFIGURED: 'ระบบยังไม่ได้ตั้งค่า', INTERNAL: 'ระบบขัดข้อง กรุณาลองใหม่' };
   ERR_TEXT.RATE_LIMIT = ERR_TEXT.RATE_LIMITED;
   ERR_TEXT.PHOTO_INVALID = 'รูปไม่ถูกต้องหรือหมดอายุ กรุณาอัปรูปใหม่'; ERR_TEXT.PAYLOAD_TOO_LARGE = 'ไฟล์รูปใหญ่เกินไป';
-  ERR_TEXT.CONFIRM_MISMATCH = 'รหัสยืนยันไม่ตรงกับรหัสอุปกรณ์'; ERR_TEXT.ASSET_IN_USE = 'อุปกรณ์นี้อยู่ในใบเบิกที่ยังไม่ปิด ลบไม่ได้';
+  ERR_TEXT.CONFIRM_MISMATCH = 'ข้อความยืนยันไม่ตรง'; ERR_TEXT.ASSET_IN_USE = 'อุปกรณ์นี้อยู่ในใบเบิกที่ยังไม่ปิด ลบไม่ได้';
+  ERR_TEXT.USER_IN_USE = 'ผู้ใช้นี้ยังถือของหรือมีใบเบิกค้าง — รับคืน/ปิดใบก่อนจึงลบได้'; ERR_TEXT.SELF_DELETE = 'ลบบัญชีของตัวเองไม่ได้';
   ERR_TEXT.CATEGORY_IN_USE = 'ยังมีอุปกรณ์ในหมวดนี้ ย้ายหมวดหรือลบอุปกรณ์ก่อน';
   ERR_TEXT.INVITE_INVALID = 'รหัสเชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้ครบแล้ว'; ERR_TEXT.ROLE_IN_USE = 'ยังมีผู้ใช้หรือรหัสเชิญที่ใช้ role นี้อยู่';
   function errText(r) {
@@ -254,7 +259,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     dropBundle(); $('#syncNote').hidden = true; S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; S.people = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
+    S.users = []; S.invites = []; S.roles = []; S.people = []; S.deletedUsers = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -348,7 +353,7 @@
   }
   function applyBundle(r) {
     if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
-    S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : []; S.people = Array.isArray(r.people) ? r.people : [];
+    S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : []; S.people = Array.isArray(r.people) ? r.people : []; S.deletedUsers = Array.isArray(r.deletedUsers) ? r.deletedUsers : [];
     if (Array.isArray(r.roles) && !S.users.length) S.roles = r.roles;
     // Fail closed: anything but an explicit false means the bundle may not hold every loan.
     S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
@@ -1028,7 +1033,7 @@
     if (l.status === 'pending') return ' · รออนุมัติ';
     var n = deciderName(l); if (!n) return '';
     if (!l.approvedBy) return ' · ผู้อนุมัติ ' + esc(n); // older loan: named approver, decider not recorded
-    return (l.status === 'rejected' ? ' · ปฏิเสธโดย ' : ' · อนุมัติโดย ') + esc(n);
+    return (l.status === 'rejected' ? ' · ปฏิเสธโดย ' : ' · อนุมัติโดย ') + esc(n) + delMark(l.approvedBy);
   }
   function loanCard(l) {
     var od = loanOverdue(l);
@@ -1039,7 +1044,7 @@
     return '<li class="item" data-loan="' + esc(l.loanId) + '"><div class="main" style="cursor:default">' +
       '<div class="row" style="justify-content:space-between;align-items:center"><span><span class="id">' + esc(l.loanId) + '</span> · ' + esc(l.project) + '</span>' +
       '<span style="flex:0">' + pill(od ? 'overdue' : loanPillClass(l), od ? 'เกินกำหนด ' + daysLate(l.dueDate) + ' วัน' : loanStatusText(l)) + '</span></div>' +
-      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + deciderText(l) + '</div>' +
+      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + delMark(l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + deciderText(l) + '</div>' +
       '<div class="meta">ขอ ' + fmtDT(l.requestedAt) + ' · ออก ' + fmtDT(l.checkedOutAt) + ' · กำหนดคืน ' + fmtDate(l.dueDate) + (l.returnedAt ? (loanHasLost(l) ? ' · ปิดใบ ' : ' · คืนครบ ') + fmtDT(l.returnedAt) : '') + '</div>' +
       (l.purpose ? '<div class="meta">' + esc(l.purpose) + '</div>' : '') + (l.rejectReason ? '<div class="meta overdue-txt">เหตุผล: ' + esc(l.rejectReason) + '</div>' : '') +
       '<ul class="loan-items">' + items + '</ul>' + (acts ? '<div class="loan-actions">' + acts + '</div>' : '') + '</div></li>';
@@ -1417,10 +1422,20 @@
       '<label>' + (edit ? 'PIN ใหม่ (เว้นว่าง = ไม่เปลี่ยน)' : 'PIN (ตัวเลข 4 หลัก)') + '<input name="pin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="new-password"' + (edit ? '' : ' required') + '></label></div>' +
       (self ? '<p class="muted small">เปลี่ยน role ของตัวเองไม่ได้</p>' : '') +
       (edit && !self ? '<label style="flex-direction:row;display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="active" class="check"' + (u.active === false || u.active === 'FALSE' ? '' : ' checked') + '> เปิดใช้งาน</label>' : '') +
-      '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่มผู้ใช้') + '</button></form>';
+      '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่มผู้ใช้') + '</button>' +
+      (edit && !self && canEditUser(u) ? '<button class="btn danger block" type="button" id="ufDel">ลบผู้ใช้ถาวร</button><p class="muted small">ลบแล้วเข้าระบบไม่ได้อีก ชื่อยังอยู่ในประวัติใบเบิก และนำชื่อผู้ใช้นี้กลับมาใช้ไม่ได้ · ถ้าแค่พักไว้ ให้ปิด "เปิดใช้งาน" แทน</p>' : '') + '</form>';
   }
   function bindUserForm(u) {
     var pf = $('#userForm').pin; pf.addEventListener('input', function () { pf.value = pf.value.replace(/\D/g, '').slice(0, 4); });
+    var del = $('#ufDel');
+    if (del) del.addEventListener('click', function () {
+      var c = prompt('ลบ "' + u.name + '" ถาวร?\nพิมพ์ชื่อผู้ใช้ ' + u.username + ' เพื่อยืนยัน');
+      if (c == null) return;
+      var g = S.gen, mg = S.modal; del.disabled = true;
+      apiPost('user_delete', { username: u.username, confirm: c.trim().toLowerCase() }).then(function () {
+        if (g !== S.gen) return; toast('ลบผู้ใช้แล้ว'); if (mg === S.modal) closeSheet(); loadUsersTab(); reload();
+      }).catch(function (r) { if (g === S.gen && mg === S.modal) { toast(errText(r), true); del.disabled = false; } });
+    });
     $('#userForm').addEventListener('submit', function (e) {
       e.preventDefault(); var f = e.target, btn = f.querySelector('[type=submit]'); btn.disabled = true;
       var body = { name: f.name.value.trim() }, self = u && u.username === S.me.username;
