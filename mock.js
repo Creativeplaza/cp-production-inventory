@@ -63,7 +63,7 @@
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
     var o = JSON.parse(JSON.stringify(l));
-    o.requesterName = nameOf(db, l.requester); o.approverName = nameOf(db, l.approver);
+    o.requesterName = nameOf(db, l.requester); o.approverName = l.approver ? nameOf(db, l.approver) : ''; o.approvedByName = l.approvedBy ? nameOf(db, l.approvedBy) : '';
     o.items.forEach(function (it) {
       var a = assetBy(db, it.assetId), del = !a && (db.deletedAssets || []).find(function (x) { return x.assetId === it.assetId; });
       a = a || del || {}; it.assetName = a.name || ''; it.sku = a.sku || ''; it.assetDeleted = !!del;
@@ -261,12 +261,11 @@
         if (!ids.length || ids.length > 20 || new Set(ids).size !== ids.length) return err(400, 'รายการอุปกรณ์ไม่ถูกต้อง');
         if (!b.project || b.project.length > 120) return err(400, 'ต้องระบุ Project');
         if (!b.dueDate || b.dueDate < todayBkk()) return err(400, 'กำหนดคืนต้องไม่ก่อนวันนี้');
-        if (!approvers(db).some(function (x) { return x.username === b.approver; })) return err(400, 'ผู้อนุมัติไม่ถูกต้อง');
-        if (b.approver === u.username && u.role !== 'admin') return err(403, 'SELF_APPROVE');
+        // v0.10 §20: approver is not chosen; any loan.approve holder decides (a sent value is ignored)
         var bad = ids.filter(function (id) { var x = assetBy(db, id); return !x || x.status !== 'available'; });
         if (bad.length) return err(409, 'ASSET_UNAVAILABLE', { assetIds: bad });
         var d = todayBkk().replace(/-/g, ''); db.seq[d] = (db.seq[d] || 0) + 1;
-        var l = { loanId: 'L-' + d + '-' + String(db.seq[d]).padStart(3, '0'), project: b.project, requester: u.username, approver: b.approver,
+        var l = { loanId: 'L-' + d + '-' + String(db.seq[d]).padStart(3, '0'), project: b.project, requester: u.username, approver: '',
           status: 'pending', purpose: b.purpose || '', requestedAt: now, dueDate: b.dueDate, approvedAt: '', approvedBy: '', rejectReason: '',
           checkedOutAt: '', checkedOutBy: '', returnedAt: '', updatedAt: now,
           items: ids.map(function (id) { return { assetId: id, itemStatus: 'requested', checkedOutAt: '', checkedOutBy: '', conditionOut: '', returnedAt: '', returnedBy: '', conditionIn: '', damaged: false, lost: false, note: '' }; }) };
@@ -276,11 +275,11 @@
       case 'loan_approve': case 'loan_reject': {
         if (b.action === 'loan_reject' && !String(b.reason || '').trim()) return err(400, 'ต้องระบุเหตุผล');
         if (!loan) return err(404, 'NOT_FOUND');
-        if (!(u.role === 'admin' || (P.loanApprove && loan.approver === u.username))) return err(403, 'NOT_APPROVER');
+        if (!(u.role === 'admin' || P.loanApprove)) return err(403, 'NOT_APPROVER');
         if (loan.requester === u.username && u.role !== 'admin') return err(403, 'SELF_APPROVE');
         if (loan.status !== 'pending') return err(409, 'BAD_TRANSITION');
         if (b.action === 'loan_approve') { loan.status = 'approved'; loan.approvedAt = now; loan.approvedBy = u.username; ev(db, u.username, 'loan_approve', loan.loanId, '', 'pending', 'approved', '', rid); }
-        else { loan.status = 'rejected'; loan.rejectReason = b.reason || ''; loan.items.forEach(function (i) { i.itemStatus = 'cancelled'; setAsset(db, i.assetId, 'available', null, u.username, 'loan_reject', rid); }); }
+        else { loan.status = 'rejected'; loan.approvedAt = now; loan.approvedBy = u.username; loan.rejectReason = b.reason || ''; loan.items.forEach(function (i) { i.itemStatus = 'cancelled'; setAsset(db, i.assetId, 'available', null, u.username, 'loan_reject', rid); }); }
         loan.updatedAt = now; save(db); return { success: true, loan: loanOut(db, loan) };
       }
       case 'loan_cancel': {

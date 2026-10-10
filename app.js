@@ -644,17 +644,14 @@
   $('#btnCartGo').addEventListener('click', openRequestForm);
 
   function openRequestForm() {
-    var appr = S.approvers.filter(function (a) { return a.username !== S.me.username || P().isAdmin; });
     var items = S.cart.map(function (id) { var a = assetById(id) || {}; return '<li><span><b>' + esc(id) + '</b> ' + esc(a.name) + '</span><button type="button" class="btn ghost sm" data-rm="' + esc(id) + '">นำออก</button></li>'; }).join('');
     openSheet('เบิกอุปกรณ์ (' + S.cart.length + ' ชิ้น)',
       '<ul class="loan-items" id="reqItems">' + items + '</ul>' +
       '<form id="reqForm" class="tab">' +
       '<label>Project ที่ใช้ *<input name="project" list="projectList" maxlength="120" required></label>' +
-      '<div class="row"><label>ผู้อนุมัติ *<select name="approver" required><option value="">เลือก…</option>' +
-      appr.map(function (a) { return '<option value="' + esc(a.username) + '">' + esc(a.name) + '</option>'; }).join('') + '</select></label>' +
-      '<label>กำหนดคืน *<input type="date" name="dueDate" min="' + today() + '" required></label></div>' +
+      '<label>กำหนดคืน *<input type="date" name="dueDate" min="' + today() + '" required></label>' +
       '<label>วัตถุประสงค์ / หน้างาน<textarea name="purpose" rows="2" maxlength="500"></textarea></label>' +
-      '<p class="muted small">ผู้เบิก / ผู้รับผิดชอบ: <b>' + esc(S.me.name) + '</b></p>' +
+      '<p class="muted small">ผู้เบิก / ผู้รับผิดชอบ: <b>' + esc(S.me.name) + '</b> · ผู้มีสิทธิ์อนุมัติคนใดก็ได้จะเป็นผู้อนุมัติ</p>' +
       '<button class="btn primary block" type="submit">ส่งคำขอเบิก</button></form>');
     $('#reqItems').addEventListener('click', function (e) {
       var b = e.target.closest('[data-rm]'); if (!b) return;
@@ -662,7 +659,7 @@
     });
     $('#reqForm').addEventListener('submit', function (e) {
       e.preventDefault(); var f = e.target, btn = f.querySelector('[type=submit]'); btn.disabled = true;
-      apiPost('loan_request', { assetIds: S.cart.slice(), project: f.project.value.trim(), approver: f.approver.value, dueDate: f.dueDate.value, purpose: f.purpose.value.trim() })
+      apiPost('loan_request', { assetIds: S.cart.slice(), project: f.project.value.trim(), dueDate: f.dueDate.value, purpose: f.purpose.value.trim() })
         .then(function (r) { S.cart = []; closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); return reload(); })
         .catch(function (r) { toast(errText(r), true); if (r && r.status === 409) reload(); })
         .finally(function () { btn.disabled = false; });
@@ -996,7 +993,7 @@
   });
   function loanActions(l) {
     var me = S.me.username, p = P(), a = [];
-    if (l.status === 'pending' && (p.isAdmin || (p.loanApprove && l.approver === me && l.requester !== me))) a.push(['approve', 'อนุมัติ', 'primary'], ['reject', 'ปฏิเสธ', 'danger']);
+    if (l.status === 'pending' && (p.isAdmin || (p.loanApprove && l.requester !== me))) a.push(['approve', 'อนุมัติ', 'primary'], ['reject', 'ปฏิเสธ', 'danger']);
     if (l.status === 'approved' && p.loanIssue) a.push(['checkout', 'จ่ายของ', 'primary']);
     if ((l.status === 'checked_out' || l.status === 'partially_returned') && p.loanIssue) a.push(['return', 'รับคืน', 'primary']);
     if ((l.status === 'pending' || l.status === 'approved') && (l.requester === me || p.isAdmin)) a.push(['cancel', 'ยกเลิก', 'ghost']);
@@ -1014,12 +1011,20 @@
     var list = S.loans.filter(function (l) {
       if (f === 'action') return needAction.indexOf(l) >= 0 || (l.requester === me && ['pending', 'approved'].indexOf(l.status) >= 0) || loanOverdue(l);
       if (f === 'active') return ['pending', 'approved', 'checked_out', 'partially_returned'].indexOf(l.status) >= 0;
-      if (f === 'mine') return l.requester === me || l.approver === me;
+      if (f === 'mine') return l.requester === me || l.approvedBy === me;
       return true;
     });
     var snap = flipSnap($('#loanList'), 'data-loan');
     $('#loanList').innerHTML = list.length ? list.map(loanCard).join('') : '<li class="empty">' + (f === 'action' ? 'ไม่มีรายการที่ต้องจัดการ' : 'ไม่มีใบเบิก') + '</li>';
     flipPlay(snap);
+  }
+  // v0.10 §20: whoever holds loan.approve decides; ApprovedBy records the decider for approve AND reject.
+  function deciderName(l) { return l.approvedBy ? (l.approvedByName || userName(l.approvedBy)) : (l.approverName || l.approver || ''); }
+  function deciderText(l) {
+    if (l.status === 'pending') return ' · รออนุมัติ';
+    var n = deciderName(l); if (!n) return '';
+    if (!l.approvedBy) return ' · ผู้อนุมัติ ' + esc(n); // older loan: named approver, decider not recorded
+    return (l.status === 'rejected' ? ' · ปฏิเสธโดย ' : ' · อนุมัติโดย ') + esc(n);
   }
   function loanCard(l) {
     var od = loanOverdue(l);
@@ -1030,7 +1035,7 @@
     return '<li class="item" data-loan="' + esc(l.loanId) + '"><div class="main" style="cursor:default">' +
       '<div class="row" style="justify-content:space-between;align-items:center"><span><span class="id">' + esc(l.loanId) + '</span> · ' + esc(l.project) + '</span>' +
       '<span style="flex:0">' + pill(od ? 'overdue' : loanPillClass(l), od ? 'เกินกำหนด ' + daysLate(l.dueDate) + ' วัน' : loanStatusText(l)) + '</span></div>' +
-      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + ' · อนุมัติโดย ' + esc(l.approverName || l.approver) + '</div>' +
+      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + deciderText(l) + '</div>' +
       '<div class="meta">ขอ ' + fmtDT(l.requestedAt) + ' · ออก ' + fmtDT(l.checkedOutAt) + ' · กำหนดคืน ' + fmtDate(l.dueDate) + (l.returnedAt ? (loanHasLost(l) ? ' · ปิดใบ ' : ' · คืนครบ ') + fmtDT(l.returnedAt) : '') + '</div>' +
       (l.purpose ? '<div class="meta">' + esc(l.purpose) + '</div>' : '') + (l.rejectReason ? '<div class="meta overdue-txt">เหตุผล: ' + esc(l.rejectReason) + '</div>' : '') +
       '<ul class="loan-items">' + items + '</ul>' + (acts ? '<div class="loan-actions">' + acts + '</div>' : '') + '</div></li>';
@@ -1149,7 +1154,7 @@
           if (i.itemStatus !== 'checked_out') return;
           rows.push([i.assetId, i.assetName, l.requesterName || l.requester, l.project, l.loanId, csvDT(i.checkedOutAt), l.dueDate, daysLate(l.dueDate) || 0]);
         } else {
-          rows.push([l.loanId, l.project, l.requesterName || l.requester, l.approverName || l.approver, i.assetId, i.sku || '', i.assetName, csvDT(l.requestedAt), csvDT(l.approvedAt),
+          rows.push([l.loanId, l.project, l.requesterName || l.requester, deciderName(l), i.assetId, i.sku || '', i.assetName, csvDT(l.requestedAt), csvDT(l.approvedAt),
             csvDT(i.checkedOutAt), l.dueDate, i.itemStatus === 'returned' ? csvDT(i.returnedAt) : '', i.itemStatus === 'returned' || i.itemStatus === 'lost' ? csvDT(i.returnedAt) : '',
             i.lost ? 'สูญหาย' : i.damaged ? 'เสียหาย' : (i.conditionIn || ''), ITEM_STATUS[i.itemStatus] || i.itemStatus, loanStatusText(l)]);
         }
