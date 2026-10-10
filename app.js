@@ -358,12 +358,17 @@
     pill.className = 'lq-pill ' + cls; pill.setAttribute('aria-hidden', 'true'); group.insertBefore(pill, group.firstChild); group.classList.add('has-pill');
     function at(p) { return { transform: 'translate(' + p.x + 'px,' + p.y + 'px)', width: p.w + 'px', height: p.h + 'px' }; }
     function move(animate) {
+      if (pill.parentNode !== group) group.insertBefore(pill, group.firstChild); // the group was re-rendered (innerHTML)
       var el = group.querySelector(selSel);
       if (!el || el.hidden || !el.offsetHeight) { pill.style.opacity = '0'; pos = null; return; }
       var to = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }, from = pos;
       if (from && from.x === to.x && from.y === to.y && from.w === to.w && from.h === to.h) return; // repeat notification: keep a running flow
       if (anim) { anim.cancel(); anim = null; }
       Object.assign(pill.style, at(to), { opacity: '' }); pos = to;
+      if (animate && !from && motionOK() && pill.animate) { // nothing was selected: grow in from the clicked item
+        anim = pill.animate([{ opacity: 0, transform: at(to).transform + ' scale(.85)' }, { opacity: 1, transform: at(to).transform }], { duration: 420, easing: 'cubic-bezier(.2,1.25,.35,1)' });
+        anim.onfinish = function () { anim = null; }; return;
+      }
       if (!animate || !from || !motionOK() || !pill.animate || (from.x === to.x && from.y === to.y)) return;
       var x0 = Math.min(from.x, to.x), y0 = Math.min(from.y, to.y), x1 = Math.max(from.x + from.w, to.x + to.w), y1 = Math.max(from.y + from.h, to.y + to.h);
       var vertical = Math.abs(to.y - from.y) > Math.abs(to.x - from.x), mid = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -378,13 +383,14 @@
       anim.onfinish = function () { anim = null; };
     }
     group._lq = move;
-    if (window.MutationObserver) new MutationObserver(function () { move(true); }).observe(group, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'aria-pressed', 'hidden'] });
+    if (window.MutationObserver) new MutationObserver(function () { move(true); }).observe(group, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected', 'aria-pressed', 'hidden'] });
     if (window.ResizeObserver) new ResizeObserver(function () { move(false); }).observe(group);
     return move;
   }
   var moveBlob = liquid($('.side-nav'), '.nav-item[aria-selected=true]', 'nav-blob');
   liquid($('#loanFilter'), '.chip[aria-pressed=true]', 'chip-pill');
   $$('.seg').forEach(function (g) { liquid(g, 'button[aria-pressed=true]', 'seg-pill'); });
+  liquid($('#stats'), '.stat[aria-pressed=true]', 'stat-pill'); // flowing gradient behind the status card you filter by
   // FLIP: when a list re-renders (filter / data change), cards that stay glide from their old spot to the new one
   // and new cards melt in, instead of the list jumping. Keyed by an attribute; skipped for long lists.
   function flipSnap(list, attr) {

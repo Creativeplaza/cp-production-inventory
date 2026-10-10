@@ -427,3 +427,14 @@ tbody tr:last-child td{border-bottom:0}
 
 /* cached bundle shown while the fresh one loads: provisional, say so */
 .sync-note{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:69;padding:6px 14px;border-radius:999px;font-size:13px;color:var(--text);background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--line-hi);box-shadow:0 8px 24px -12px rgba(20,20,30,.35);animation:fadeIn .25s ease both}
+/* status cards: a living gradient flows to the card you click (owner 2026-10-10) */
+@keyframes gradFlow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.stat-pill{border-radius:var(--radius);background:linear-gradient(120deg,#4a0085,#6200af,#8b3dff,#c08bff,#6200af);background-size:320% 320%;animation:gradFlow 7s ease-in-out infinite;box-shadow:0 16px 34px -16px rgba(98,0,175,.65)}
+.stats.has-pill .stat[aria-pressed=true]{background:transparent;border-color:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.stats.has-pill .stat[aria-pressed=true] b,.stats.has-pill .stat[aria-pressed=true] span{color:#fff}
+.stats.has-pill .stat[aria-pressed=true]::before{opacity:0}
+/* calmer loading motion: slower, softer shimmer and progress sweep */
+@keyframes shimmer{0%{background-position:150% 0}100%{background-position:-50% 0}}
+.sk,.cover.loading,.hc-img.loading,.gallery.loading{background-size:250% 100%!important;animation-duration:2.6s!important;animation-timing-function:ease-in-out!important}
+.top-progress::after{animation-duration:2.4s!important;animation-timing-function:cubic-bezier(.45,0,.55,1)!important}
+.ph-spin{animation-duration:1.3s!important}
