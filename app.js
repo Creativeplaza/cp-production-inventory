@@ -39,9 +39,17 @@
   }
   function daysLate(due) { if (!due) return 0; var t = today(); return t > due ? Math.round((Date.parse(t) - Date.parse(due)) / 864e5) : 0; }
   function pill(cls, text) { return '<span class="pill s-' + esc(cls) + '">' + esc(text) + '</span>'; }
+  function person(un) { return (S.people || []).find(function (x) { return x.username === un; }) || null; }
+  // "0812345678 · ฝ่ายผลิต" for a user, '' when they have not filled it in (v0.9 profile)
+  function contactOf(un) { var p = person(un); return p ? [p.phone, p.department].filter(Boolean).join(' · ') : ''; }
+  function avatarHtml(p) {
+    var t = p && safeThumb(p.avatarThumb);
+    return t ? '<img alt="" src="' + esc(t) + '">' : esc(((p && (p.name || p.username)) || '?').trim().charAt(0).toUpperCase());
+  }
   function userName(un) {
     if (!un) return '–';
     if (S.me && un === S.me.username) return S.me.name;
+    var pp = person(un); if (pp) return pp.name;
     var a = S.approvers.find(function (x) { return x.username === un; }); if (a) return a.name;
     var l = S.loans.find(function (x) { return x.requester === un; }); return l ? l.requesterName : un;
   }
@@ -247,6 +255,41 @@
     showLogin();
   }
   $('#btnLogout').addEventListener('click', function () { if (confirm('ออกจากระบบ?')) logout(false); });
+  $('#btnProfile').addEventListener('click', function () { closeDrawer(); openProfile(); });
+  /* ---------- profile (contract §19): name, photo, phone, department; logout ---------- */
+  function openProfile() {
+    var me = S.me; if (!me) return;
+    openSheet('โปรไฟล์ของฉัน',
+      '<div class="pf-head"><span class="avatar">' + avatarHtml(me) + '</span><div><b>' + esc(me.name) + '</b><p class="muted small">' + esc(me.username) + ' · ' + esc(roleName(me.role)) + '</p></div></div>' +
+      '<form id="profileForm" class="form">' +
+      '<div class="pf-photo"><span class="lbl">รูปโปรไฟล์</span><div id="pfPhoto"></div></div>' +
+      '<label>ชื่อที่แสดง *<input name="name" required maxlength="60" value="' + esc(me.name) + '"></label>' +
+      '<label>เบอร์โทร<input name="phone" inputmode="tel" maxlength="20" placeholder="เช่น 081-234-5678" value="' + esc(me.phone || '') + '"></label>' +
+      '<label>แผนก<input name="department" maxlength="60" placeholder="เช่น ฝ่ายผลิต" value="' + esc(me.department || '') + '"></label>' +
+      '<p class="muted small">เบอร์โทรและแผนกจะแสดงให้เพื่อนร่วมงานเห็นในใบเบิกและตรงผู้ถืออุปกรณ์</p>' +
+      '<div class="pf-actions"><button type="button" class="btn danger" id="pfLogout">ออกจากระบบ</button><button class="btn primary" type="submit">บันทึก</button></div></form>');
+    var f = $('#profileForm'), btn = f.querySelector('[type=submit]'), had = me.avatarPhotoId || '';
+    var pick = photoPicker($('#pfPhoto'), 'avatar', { min: 0, max: 1, capture: 'user', existing: had && safeThumb(me.avatarThumb) ? [{ photoId: had, thumb: me.avatarThumb }] : [] });
+    pick.onchange = function () { btn.disabled = pick.busy(); };
+    f.phone.addEventListener('input', function () { this.value = this.value.replace(/[^0-9+\-() ]/g, ''); });
+    $('#pfLogout').addEventListener('click', function () { if (confirm('ออกจากระบบ?')) { closeSheet(true); logout(false); } });
+    f.addEventListener('submit', function (e) {
+      e.preventDefault(); if (pick.busy()) return;
+      var body = {}, name = f.name.value.trim(), phone = f.phone.value.trim(), dept = f.department.value.trim(), photo = pick.ids()[0] || '';
+      if (!name) { toast('ต้องระบุชื่อที่แสดง', true); return; }
+      if (name !== me.name) body.name = name;
+      if (phone !== (me.phone || '')) body.phone = phone;
+      if (dept !== (me.department || '')) body.department = dept;
+      if (photo !== had) body.avatarPhotoId = photo;
+      if (!Object.keys(body).length) { closeSheet(); return; }
+      var g = S.gen; btn.disabled = true;
+      apiPost('profile_update', body).then(function (r) {
+        if (g !== S.gen) return;
+        if (r && r.user) { Object.assign(S.me, r.user); renderSideUser(); }
+        toast('บันทึกโปรไฟล์แล้ว'); closeSheet(); return reload();
+      }).catch(function (r) { if (g === S.gen) { btn.disabled = false; toast(errText(r), true); } });
+    });
+  }
 
   /* ---------- load ---------- */
   function skeleton() {
@@ -299,7 +342,7 @@
   }
   function applyBundle(r) {
     if (!r.me || !Array.isArray(r.assets) || !Array.isArray(r.loans) || !Array.isArray(r.approvers)) throw { error: 'ข้อมูลจากเซิร์ฟเวอร์ไม่ครบ' };
-    S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : [];
+    S.me = r.me; S.assets = r.assets; S.loans = r.loans; S.approvers = r.approvers; S.categories = Array.isArray(r.categories) ? r.categories : []; S.people = Array.isArray(r.people) ? r.people : [];
     if (Array.isArray(r.roles) && !S.users.length) S.roles = r.roles;
     // Fail closed: anything but an explicit false means the bundle may not hold every loan.
     S.loansTruncated = r.loansTruncated !== false; allLoans = null; allLoansP = null; S.dataGen++;
@@ -311,10 +354,13 @@
   function P() { return (S.me && S.me.perms) || {}; }
   function roleName(id) { var r = (S.roles || []).find(function (x) { return x.roleId === id; }); return r ? r.name : (ROLES[id] || id || ''); }
 
-  function renderAll() {
+  function renderSideUser() {
     $('#who').textContent = S.me.name; $('#whoRole').textContent = roleName(S.me.role);
-    $('#avatar').textContent = (S.me.name || S.me.username || '?').trim().charAt(0).toUpperCase();
-    $('.side-user').title = S.me.name + ' · ' + roleName(S.me.role);
+    $('#avatar').innerHTML = avatarHtml(S.me);
+    $('.side-user').title = 'โปรไฟล์ · ' + S.me.name;
+  }
+  function renderAll() {
+    renderSideUser();
     $('#navUsers').hidden = !P().userManage; $('#navReport').hidden = !P().reportView; $('#navSettings').hidden = !P().assetManage;
     $('#assetAdminBar').hidden = !P().assetManage;
     if ((S.tab === 'users' && !P().userManage) || (S.tab === 'report' && !P().reportView) || (S.tab === 'settings' && !P().assetManage)) switchTab('assets');
@@ -543,7 +589,7 @@
     var a = assetById(hoverAsset), hc = $('#hoverCard'); if (!a) { hideHover(); return; }
     var od = isOverdueAsset(a), t = coverCache[coverKey(a)];
     var rows = [['SKU', a.sku], ['หมวด', catName(a.category)], ['รุ่น', a.model], ['Serial', a.serial], ['ที่เก็บ', a.location]];
-    if (a.holder) rows.push(['ผู้ถือ', userName(a.holder)], ['Project', a.project], ['กำหนดคืน', fmtDate(a.dueDate) + (od ? ' (เกิน ' + daysLate(a.dueDate) + ' วัน)' : '')]);
+    if (a.holder) rows.push(['ผู้ถือ', userName(a.holder) + (contactOf(a.holder) ? ' · ' + contactOf(a.holder) : '')], ['Project', a.project], ['กำหนดคืน', fmtDate(a.dueDate) + (od ? ' (เกิน ' + daysLate(a.dueDate) + ' วัน)' : '')]);
     if (a.notes) rows.push(['หมายเหตุ', a.notes]);
     hc.innerHTML = (hasPhotos(a) ? '<div class="hc-img' + (t ? '' : ' loading') + '">' + (t ? '<img alt="" src="' + esc(t) + '">' : '') + '</div>' : '<div class="hc-img none">ไม่มีรูป</div>') +
       '<div class="hc-body"><div class="hc-head"><b>' + esc(a.assetId) + '</b>' + (od ? pill('overdue', 'ค้างคืน') : pill(a.status, ASSET_STATUS[a.status] || a.status)) + '</div>' +
@@ -658,7 +704,7 @@
         '<p class="muted small">' + esc(a.sku) + '</p></div></div>' +
         '<dl class="kv"><dt>รุ่น</dt><dd>' + esc(a.model || '–') + '</dd><dt>Serial</dt><dd>' + esc(a.serial || '–') + '</dd>' +
         '<dt>หมวด</dt><dd>' + esc(catName(a.category)) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
-        (a.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(userName(a.holder)) + '</dd><dt>Project</dt><dd>' + esc(a.project) + '</dd><dt>กำหนดคืน</dt><dd>' + fmtDate(a.dueDate) + '</dd>' : '') +
+        (a.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(userName(a.holder)) + (contactOf(a.holder) ? '<br><span class="contact">' + esc(contactOf(a.holder)) + '</span>' : '') + '</dd><dt>Project</dt><dd>' + esc(a.project) + '</dd><dt>กำหนดคืน</dt><dd>' + fmtDate(a.dueDate) + '</dd>' : '') +
         (a.notes ? '<dt>หมายเหตุ</dt><dd>' + esc(a.notes) + '</dd>' : '') + '</dl>' +
         '<div class="row">' + act.join('') + '</div><h3>ประวัติการเบิก (ล่าสุด)</h3>' + hist;
       $('#sheetBody').onclick = function (e) {
@@ -739,7 +785,7 @@
         return '<div class="ph' + (it.state === 'up' ? ' up' : it.state === 'err' ? ' err' : '') + '">' + (it.thumb ? '<img alt="" src="' + esc(it.thumb) + '">' : '') +
           (it.state === 'up' ? '<span class="ph-spin"></span>' : '') + (it.state === 'err' ? '<span class="ph-msg">อัปไม่สำเร็จ</span>' : '') +
           '<button type="button" class="ph-x" data-k="' + k + '" aria-label="ลบรูป">' + ICON_X + '</button></div>';
-      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*" capture="environment" multiple hidden></label>' : '') +
+      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*" capture="' + (opts.capture || 'environment') + '"' + (opts.max > 1 ? ' multiple' : '') + ' hidden></label>' : '') +
         '</div><p class="muted small ph-hint">' + (opts.min ? 'ต้องมีอย่างน้อย ' + opts.min + ' รูป · ' : '') + 'สูงสุด ' + opts.max + ' รูป</p>';
       var input = el.querySelector('input[type=file]'); if (input) input.onchange = function () { add(Array.prototype.slice.call(input.files)); };
       if (ctl.onchange) ctl.onchange();
@@ -978,7 +1024,7 @@
     return '<li class="item" data-loan="' + esc(l.loanId) + '"><div class="main" style="cursor:default">' +
       '<div class="row" style="justify-content:space-between;align-items:center"><span><span class="id">' + esc(l.loanId) + '</span> · ' + esc(l.project) + '</span>' +
       '<span style="flex:0">' + pill(od ? 'overdue' : loanPillClass(l), od ? 'เกินกำหนด ' + daysLate(l.dueDate) + ' วัน' : loanStatusText(l)) + '</span></div>' +
-      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + ' · อนุมัติโดย ' + esc(l.approverName || l.approver) + '</div>' +
+      '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + ' · อนุมัติโดย ' + esc(l.approverName || l.approver) + '</div>' +
       '<div class="meta">ขอ ' + fmtDT(l.requestedAt) + ' · ออก ' + fmtDT(l.checkedOutAt) + ' · กำหนดคืน ' + fmtDate(l.dueDate) + (l.returnedAt ? (loanHasLost(l) ? ' · ปิดใบ ' : ' · คืนครบ ') + fmtDT(l.returnedAt) : '') + '</div>' +
       (l.purpose ? '<div class="meta">' + esc(l.purpose) + '</div>' : '') + (l.rejectReason ? '<div class="meta overdue-txt">เหตุผล: ' + esc(l.rejectReason) + '</div>' : '') +
       '<ul class="loan-items">' + items + '</ul>' + (acts ? '<div class="loan-actions">' + acts + '</div>' : '') + '</div></li>';

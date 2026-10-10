@@ -56,6 +56,9 @@
     return { loanRequest: has(u, 'loan.request'), loanApprove: has(u, 'loan.approve'), loanIssue: has(u, 'loan.issue'), assetManage: has(u, 'asset.manage'),
       reportView: has(u, 'report.view'), userManage: has(u, 'user.manage'), isAdmin: u.role === 'admin' };
   }
+  // v0.9 profile: public fields only (no hash/salt/role internals)
+  function avatarOf(db, u) { var x = u.avatarPhotoId && db.photos.find(function (p) { return p.photoId === u.avatarPhotoId && p.status === 'attached'; }); return x ? x.thumb : ''; }
+  function profileOf(db, u) { return { username: u.username, name: u.name, phone: u.phone || '', department: u.department || '', avatarThumb: avatarOf(db, u) }; }
   function nameOf(db, un) { var u = db.users.find(function (x) { return x.username === un; }); return u ? u.name : un; }
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
@@ -89,7 +92,9 @@
     if (!u) return err(401, 'Unauthorized');
     if (api === 'me') return { success: true, user: { username: u.username, name: u.name, role: u.role }, perms: perms(u) };
     if (api === 'bundle') return { success: true, assets: db.assets.map(function (a) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; }); return Object.assign({}, a, { photoCount: ph.length, coverPhotoId: ph.length ? ph[0].photoId : '' }); }), loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
-      approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }), me: { username: u.username, name: u.name, role: u.role, perms: perms(u) }, serverTime: Date.now() };
+      approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }),
+      people: db.users.filter(function (x) { return x.active; }).map(function (x) { return profileOf(db, x); }),
+      me: Object.assign(profileOf(db, u), { role: u.role, perms: perms(u), avatarPhotoId: u.avatarPhotoId || '' }), serverTime: Date.now() };
     if (api === 'getAsset') {
       var a = assetBy(db, p.id); if (!a) return err(404, 'NOT_FOUND');
       var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; })
@@ -165,13 +170,35 @@
     var now = new Date().toISOString(), r;
     switch (b.action) {
       case 'photo_upload': {
-        if (b.kind === 'asset' ? !P.assetManage : b.kind === 'return' ? !P.loanIssue : true) return err(403, 'FORBIDDEN');
+        if (b.kind === 'asset' ? !P.assetManage : b.kind === 'return' ? !P.loanIssue : b.kind !== 'avatar') return err(403, 'FORBIDDEN');
         if (!/^data:image\/jpeg;base64,/.test(b.thumb || '') || !b.data) return err(400, 'PHOTO_INVALID');
         if (db.photos.filter(function (x) { return x.status === 'pending' && x.uploadedBy === u.username; }).length >= 30) return err(429, 'PHOTO_QUOTA');
         var pid = 'P' + (db.photos.length + 1) + '-' + Math.random().toString(36).slice(2, 7);
         db.photos.push({ photoId: pid, kind: b.kind, thumb: b.thumb, width: b.width, height: b.height, status: 'pending', uploadedBy: u.username, uploadedAt: now, assetId: '', loanId: '', position: 0 });
         ev(db, u.username, 'photo_upload', '', '', '', '', pid, rid); save(db);
         return { success: true, photo: { photoId: pid, kind: b.kind, thumb: b.thumb, width: b.width, height: b.height } };
+      }
+      case 'profile_update': {
+        var allowed = ['name', 'phone', 'department', 'avatarPhotoId'], keys = Object.keys(b).filter(function (k) { return ['action', 'token', 'requestId'].indexOf(k) < 0; });
+        if (!keys.length || keys.some(function (k) { return allowed.indexOf(k) < 0; })) return err(400, 'ข้อมูลโปรไฟล์ไม่ถูกต้อง');
+        if (b.name !== undefined && (!String(b.name).trim() || String(b.name).trim().length > 60)) return err(400, 'ชื่อ 1–60 ตัวอักษร');
+        if (b.phone !== undefined && (String(b.phone).length > 20 || !/^[0-9+\-() ]*$/.test(b.phone))) return err(400, 'เบอร์โทรไม่ถูกต้อง');
+        if (b.department !== undefined && String(b.department).length > 60) return err(400, 'แผนกยาวเกินไป');
+        var me = db.users.find(function (x) { return x.username === u.username; });
+        if (b.avatarPhotoId !== undefined && b.avatarPhotoId !== '') {
+          var av = db.photos.find(function (x) { return x.photoId === b.avatarPhotoId; });
+          if (!av || av.status !== 'pending' || av.kind !== 'avatar' || av.uploadedBy !== u.username) return err(400, 'PHOTO_INVALID');
+        }
+        if (b.avatarPhotoId !== undefined) {
+          db.photos.forEach(function (x) { if (x.kind === 'avatar' && x.photoId === me.avatarPhotoId && x.status === 'attached') x.status = 'detached'; });
+          if (b.avatarPhotoId) db.photos.find(function (x) { return x.photoId === b.avatarPhotoId; }).status = 'attached';
+          me.avatarPhotoId = b.avatarPhotoId;
+        }
+        if (b.name !== undefined) me.name = String(b.name).trim();
+        if (b.phone !== undefined) me.phone = String(b.phone).trim();
+        if (b.department !== undefined) me.department = String(b.department).trim();
+        ev(db, u.username, 'profile_update', '', '', '', '', '', rid); save(db);
+        return { success: true, user: Object.assign(profileOf(db, me), { role: me.role, avatarPhotoId: me.avatarPhotoId || '' }) };
       }
       case 'category_upsert': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');

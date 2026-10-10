@@ -98,7 +98,14 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .side-card .sc-ico{flex:none;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:var(--accent);color:#fff;font-size:16px}
 .side-card.warn{border-color:rgba(179,38,30,.3);background:linear-gradient(135deg,rgba(179,38,30,.08),rgba(255,255,255,.6))}
 .side-card.warn .sc-ico{background:var(--bad);color:#fff}
-.side-user{display:flex;align-items:center;gap:12px;padding:6px;min-width:0}
+.side-user{display:flex;align-items:center;gap:12px;padding:6px;min-width:0;width:100%;border:1px solid transparent;border-radius:16px;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background .2s,border-color .2s,transform .5s var(--spring-bouncy,ease)}
+.side-user:hover{background:rgba(255,255,255,.6);border-color:var(--line-hi)}
+.side-user:active{transform:scale(.97,.94);transition-duration:.12s}
+.side-user .nav-txt{flex:1;min-width:0}
+.side-user-go{flex:none;width:16px;height:16px;fill:none;stroke:var(--muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.shell.collapsed .side-user-go{display:none}
+.avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+.avatar{overflow:hidden}
 .avatar{flex:none;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:700;background:#121214;color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(30,30,40,.2)}
 .side-user .nav-txt b{font-weight:600}
 #btnLogout{color:var(--muted)}
@@ -427,6 +434,17 @@ tbody tr:last-child td{border-bottom:0}
 
 /* cached bundle shown while the fresh one loads: provisional, say so */
 .sync-note{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:69;padding:6px 14px;border-radius:999px;font-size:13px;color:var(--text);background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--line-hi);box-shadow:0 8px 24px -12px rgba(20,20,30,.35);animation:fadeIn .25s ease both}
+
+/* v0.9 profile sheet + sidebar keeps the user card in view */
+.sidebar .side-nav{overflow-y:auto;min-height:0;flex:0 1 auto;scrollbar-width:none}
+.sidebar .side-nav::-webkit-scrollbar{display:none}
+.pf-head{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.pf-head .avatar{width:64px;height:64px;font-size:24px}
+.pf-head .muted{margin:2px 0 0}
+.pf-photo .ph-grid{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+.pf-actions{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:14px}
+.contact{color:var(--muted);font-size:13px}
+
 /* status cards: a living gradient flows to the card you click (owner 2026-10-10) */
 @keyframes gradFlow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 .stat-pill{border-radius:var(--radius);background:linear-gradient(120deg,#4a0085,#6200af,#8b3dff,#c08bff,#6200af);background-size:320% 320%;animation:gradFlow 7s ease-in-out infinite;box-shadow:0 16px 34px -16px rgba(98,0,175,.65)}
