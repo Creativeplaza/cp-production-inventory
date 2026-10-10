@@ -2,6 +2,9 @@
 (function () {
   'use strict';
   var CFG = window.CPI_CONFIG;
+  // Owner: page size is locked. iOS Safari ignores user-scalable=no, so pinch and the gesture events are blocked here too.
+  ['gesturestart', 'gesturechange'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); }, { passive: false }); });
+  document.addEventListener('touchmove', function (e) { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
@@ -271,7 +274,7 @@
       '<p class="muted small">เบอร์โทรและแผนกจะแสดงให้เพื่อนร่วมงานเห็นในใบเบิกและตรงผู้ถืออุปกรณ์</p>' +
       '<div class="pf-actions"><button type="button" class="btn danger" id="pfLogout">ออกจากระบบ</button><button class="btn primary" type="submit">บันทึก</button></div></form>');
     var f = $('#profileForm'), btn = f.querySelector('[type=submit]'), had = me.avatarPhotoId || '';
-    var pick = photoPicker($('#pfPhoto'), 'avatar', { min: 0, max: 1, capture: 'user', existing: had && safeThumb(me.avatarThumb) ? [{ photoId: had, thumb: me.avatarThumb }] : [] });
+    var pick = photoPicker($('#pfPhoto'), 'avatar', { min: 0, max: 1, capture: false, existing: had && safeThumb(me.avatarThumb) ? [{ photoId: had, thumb: me.avatarThumb }] : [] });
     pick.onchange = function () { btn.disabled = pick.busy(); };
     f.phone.addEventListener('input', function () { this.value = this.value.replace(/[^0-9+\-() ]/g, ''); });
     $('#pfLogout').addEventListener('click', function () { if (confirm('ออกจากระบบ?')) { closeSheet(true); logout(false); } });
@@ -788,7 +791,7 @@
         return '<div class="ph' + (it.state === 'up' ? ' up' : it.state === 'err' ? ' err' : '') + '">' + (it.thumb ? '<img alt="" src="' + esc(it.thumb) + '">' : '') +
           (it.state === 'up' ? '<span class="ph-spin"></span>' : '') + (it.state === 'err' ? '<span class="ph-msg">อัปไม่สำเร็จ</span>' : '') +
           '<button type="button" class="ph-x" data-k="' + k + '" aria-label="ลบรูป">' + ICON_X + '</button></div>';
-      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*" capture="' + (opts.capture || 'environment') + '"' + (opts.max > 1 ? ' multiple' : '') + ' hidden></label>' : '') +
+      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*"' + (opts.capture === false ? '' : ' capture="' + (opts.capture || 'environment') + '"') + (opts.max > 1 ? ' multiple' : '') + ' hidden></label>' : '') +
         '</div><p class="muted small ph-hint">' + (opts.min ? 'ต้องมีอย่างน้อย ' + opts.min + ' รูป · ' : '') + 'สูงสุด ' + opts.max + ' รูป</p>';
       var input = el.querySelector('input[type=file]'); if (input) input.onchange = function () { add(Array.prototype.slice.call(input.files)); };
       if (ctl.onchange) ctl.onchange();

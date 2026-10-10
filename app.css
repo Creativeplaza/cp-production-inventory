@@ -17,6 +17,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0}
+html{touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{
   background:
     radial-gradient(900px 600px at 85% -10%,rgba(98,0,175,.10),transparent 60%),
