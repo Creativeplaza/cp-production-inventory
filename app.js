@@ -78,6 +78,8 @@
   // Mock API only on a local dev host with no API_URL; a deployed page without API_URL fails closed.
   var USE_MOCK = !CFG.API_URL && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && !!window.CPI_MOCK;
   var NOT_CONFIGURED = !CFG.API_URL && !USE_MOCK;
+  // Local mock only (localhost + ?mock=1): read-only counters for the browser regression suite.
+  if (USE_MOCK) window.__cpiDebug = { people: function () { return (S.people || []).length; } };
   // Contract §1/§5: every call is POST text/plain with the token in the body (never in the URL).
   // Reads are side-effect free → one retry on network failure is safe.
   function apiGet(action, params) {
@@ -249,7 +251,7 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     dropBundle(); $('#syncNote').hidden = true; S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
+    S.users = []; S.invites = []; S.roles = []; S.people = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
     closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
@@ -282,12 +284,13 @@
       if (dept !== (me.department || '')) body.department = dept;
       if (photo !== had) body.avatarPhotoId = photo;
       if (!Object.keys(body).length) { closeSheet(); return; }
-      var g = S.gen; btn.disabled = true;
+      var g = S.gen, mg = S.modal; btn.disabled = true;
       apiPost('profile_update', body).then(function (r) {
         if (g !== S.gen) return;
         if (r && r.user) { Object.assign(S.me, r.user); renderSideUser(); }
-        toast('บันทึกโปรไฟล์แล้ว'); closeSheet(); return reload();
-      }).catch(function (r) { if (g === S.gen) { btn.disabled = false; toast(errText(r), true); } });
+        if (mg === S.modal) { toast('บันทึกโปรไฟล์แล้ว'); closeSheet(); } // a newer sheet stays open untouched
+        return reload();
+      }).catch(function (r) { if (g === S.gen && mg === S.modal) { btn.disabled = false; toast(errText(r), true); } });
     });
   }
 
