@@ -1071,7 +1071,7 @@
     openSheet('รับคืน · ' + l.loanId,
       '<p class="muted small">เลือกชิ้นที่รับคืนตอนนี้ (คืนบางชิ้นได้ — ชิ้นที่เหลือยังผูกกับใบเบิกและผู้รับผิดชอบเดิม)</p>' +
       '<form id="retForm" class="tab">' + out.map(function (i) {
-        return '<div class="ret-row" data-id="' + esc(i.assetId) + '"><label style="flex-direction:row;display:flex;gap:8px;align-items:center;color:var(--text);font-size:15px"><input type="checkbox" class="check" name="pick" checked> <b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</label>' +
+        return '<div class="ret-row" data-id="' + esc(i.assetId) + '"><label style="flex-direction:row;display:flex;gap:8px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" class="check" name="pick" checked> <b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</label>' +
           '<div class="flags"><label><input type="checkbox" name="damaged"> เสียหาย (ส่งตรวจ)</label><label><input type="checkbox" name="lost"> สูญหาย</label></div>' +
           '<input name="cond" placeholder="สภาพ / หมายเหตุ (ถ้ามี)" maxlength="200">' +
           '<div class="field"><span class="pin-label">รูปสภาพตอนคืน * (ตำหนิ / ชำรุด)</span><div class="ret-photos"></div></div></div>';
