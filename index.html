@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-<title>Production Inventory · Creative Plaza</title>
+<title>Creative Plaza C Hub · ระบบเบิกและจัดการทรัพย์สิน</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
@@ -23,8 +23,8 @@
 <section id="login" class="login" hidden>
   <form class="login-card" id="loginForm" method="post" autocomplete="on">
     <picture class="login-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
-    <h1>Production Inventory</h1>
-    <p class="muted">ระบบเบิกทรัพย์สิน</p>
+    <h1>Creative Plaza C Hub</h1>
+    <p class="muted">ระบบเบิกและจัดการทรัพย์สิน</p>
     <label>ชื่อผู้ใช้<input name="username" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
     <div class="pin-field">
       <span class="pin-label" id="pinLbl">PIN 4 หลัก</span>
@@ -81,7 +81,7 @@
       <picture class="side-logo"><img src="logo-dark.png" alt="Creative Plaza"></picture>
       <button class="side-toggle" id="btnCollapse" aria-label="ย่อ/ขยายเมนู" title="ย่อ/ขยายเมนู"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg></button>
     </div>
-    <p class="side-app">Production Inventory</p>
+    <p class="side-app">C Hub<span class="side-sub">ระบบเบิกและจัดการทรัพย์สิน</span></p>
     <nav class="side-nav" role="tablist" aria-orientation="vertical">
       <button class="nav-item" role="tab" data-tab="assets" aria-selected="true" title="อุปกรณ์"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></span><span class="nav-txt">อุปกรณ์</span></button>
       <button class="nav-item" role="tab" data-tab="loans" aria-selected="false" title="ใบเบิก"><span class="nav-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 3.5h6v3H9z"/><path d="M9 11h6M9 15h4"/></svg><span class="dot-badge" id="loanBadge" hidden></span></span><span class="nav-txt">ใบเบิก</span></button>

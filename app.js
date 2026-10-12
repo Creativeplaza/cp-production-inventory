@@ -1277,7 +1277,7 @@
     var name = { register: 'ทะเบียนทรัพย์สิน', history: 'ประวัติเบิกคืน', overdue: 'ค้างคืน' }[S.report];
     // Unique name per export: Bangkok date-time to the millisecond + a per-page counter → never overwrites.
     var iso = new Date(Date.now() + 7 * 3600e3).toISOString(), stamp = iso.slice(0, 10) + '_' + iso.slice(11, 19).replace(/:/g, '') + '-' + iso.slice(20, 23);
-    saveCsv(csv, 'CP-ProductionInventory-' + name + '-' + stamp + '-' + (++csvSeq) + '.csv');
+    saveCsv(csv, 'CP-CHub-' + name + '-' + stamp + '-' + (++csvSeq) + '.csv');
   });
 
   /* ---------- settings: categories (contract §15) ---------- */
