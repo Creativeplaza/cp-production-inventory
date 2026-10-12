@@ -62,7 +62,7 @@
   function nameOf(db, un) { var u = db.users.find(function (x) { return x.username === un; }) || (db.deletedUsers || []).find(function (x) { return x.username === un; }); return u ? u.name : un; }
   function takenName(db, un) { return db.users.some(function (x) { return x.username === un; }) || (db.deletedUsers || []).some(function (x) { return x.username === un; }); }
   // v0.12 §22: blank Division (older rows) reads as production
-  var DIVS = ['production', 'operation', 'backoffice'];
+  var DIVS = ['production', 'operation', 'backoffice', 'central'];
   function divOut(a) { return Object.assign({}, a, { division: a.division || 'production' }); }
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
@@ -255,6 +255,7 @@
         if (b.photoIds !== undefined) { var pu = photoSet(b.photoIds, 'asset', 1, 5, ua.assetId); if (pu) return err(400, pu === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID'); attach(b.photoIds, 'asset', ua.assetId); }
         if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
         ['sku', 'name', 'model', 'serial', 'location', 'notes', 'division'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
+        if (!ua.division) ua.division = 'production'; // like the backend: an edit writes the default into a blank legacy row
         if (b.status && b.status !== ua.status) {
           if (ua.currentLoanId) return err(409, 'BAD_TRANSITION');
           if (['available', 'inspection', 'maintenance', 'lost', 'retired'].indexOf(b.status) < 0) return err(409, 'BAD_TRANSITION');

@@ -15,8 +15,8 @@
   // v0.6: categories come from the server (bundle.categories); the fallback only covers an older backend.
   function cats() { return (S.categories && S.categories.length) ? S.categories : Object.keys(CATEGORIES_FALLBACK).map(function (c) { return { code: c, name: CATEGORIES_FALLBACK[c], active: true }; }); }
   function catName(code) { var c = cats().find(function (x) { return x.code === code; }); return c ? c.name : code; }
-  // v0.12 §22: three fixed storage divisions; a blank value on an older asset means production
-  var DIVISIONS = [['production', 'Production'], ['operation', 'Operation'], ['backoffice', 'BackOffice']];
+  // v0.12 §22: four fixed storage divisions; a blank value on an older asset means production
+  var DIVISIONS = [['production', 'Production'], ['operation', 'Operation'], ['backoffice', 'BackOffice'], ['central', 'ส่วนกลาง']];
   function divOf(a) { return (a && a.division) || 'production'; }
   function divName(d) { var x = DIVISIONS.find(function (v) { return v[0] === d; }); return x ? x[1] : d; }
   var ROLES = { admin: 'ผู้ดูแลระบบ', approver: 'ผู้อนุมัติ', storekeeper: 'ผู้ดูแลคลัง', requester: 'ผู้เบิก' };
@@ -309,7 +309,7 @@
   /* ---------- load ---------- */
   function skeleton() {
     var card = '<li class="item skel"><span class="sk sk-box"></span><div class="main"><span class="sk sk-line w60"></span><span class="sk sk-line w35"></span></div><span class="sk sk-pill"></span></li>';
-    $('#divs').innerHTML = new Array(4).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
+    $('#divs').innerHTML = new Array(5).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
     $('#stats').innerHTML = new Array(5).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
     $('#assetList').innerHTML = $('#loanList').innerHTML = new Array(7).join(card);
     $('#usersBody').innerHTML = '<ul class="list">' + new Array(5).join(card) + '</ul>';
@@ -984,7 +984,6 @@
       var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, photoIds: pick.ids() };
       var p;
       if (edit && !body.photoIds.length) delete body.photoIds; // legacy asset with no photos: keep as-is
-      if (edit && body.division === divOf(a) && !a.division) delete body.division; // blank legacy row: keep it untouched unless changed
       if (edit) { body.assetId = a.assetId; if (f.status && f.status.value !== a.status) body.status = f.status.value; p = apiPost('asset_update', body); }
       else {
         body.category = f.category.value; var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
