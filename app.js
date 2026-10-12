@@ -753,10 +753,20 @@
       var body = { project: f.project.value.trim(), dueDate: f.dueDate.value, purpose: f.purpose.value.trim() };
       if (S.cart.length) body.assetIds = S.cart.slice();
       if (lines.length) body.stockLines = lines;
-      var cur = sheetIsCurrent();
+      // The submitted picks leave the cart now (so a newer cart/form never shows in-flight items) and come back only
+      // if this request fails and the user hasn't picked them again meanwhile (GPT r2 S3-1).
+      var cur = sheetIsCurrent(), sentA = body.assetIds || [], sentS = body.stockLines || [];
+      S.cart = S.cart.filter(function (id) { return sentA.indexOf(id) < 0; });
+      sentS.forEach(function (x) { delete S.stockCart[x.stockId]; });
+      renderCart(); renderAssets();
       apiPost('loan_request', body)
-        .then(function (r) { S.cart = []; S.stockCart = {}; renderCart(); if (cur()) { closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); } return reload(); })
-        .catch(function (r) { if (cur()) { toast(errText(r), true); btn.disabled = false; } if (r && r.status === 409) reload(); });
+        .then(function (r) { if (cur()) { closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); } return reload(); })
+        .catch(function (r) {
+          sentA.forEach(function (id) { if (S.cart.indexOf(id) < 0 && S.cart.length < 20) S.cart.push(id); });
+          sentS.forEach(function (x) { if (!(x.stockId in S.stockCart)) S.stockCart[x.stockId] = x.qty; });
+          renderCart(); renderAssets();
+          if (cur()) { toast(errText(r), true); btn.disabled = false; } if (r && r.status === 409) reload();
+        });
     });
   }
 
@@ -1217,7 +1227,9 @@
   // v0.13 (GPT review S3-2): stock lines count too — a counted loss is a loss, and a loan closed by use (consumable
   // or counted used) or a short/zero issue is "ปิดใบ", not a full physical return.
   function loanHasLost(l) { return (l.items || []).some(function (i) { return i.itemStatus === 'lost'; }) || (l.stockLines || []).some(function (x) { return x.qtyLost > 0; }); }
-  function loanFullyReturned(l) { return !loanHasLost(l) && (l.stockLines || []).every(function (x) { return x.lineStatus === 'cancelled' || (x.qtyIssued > 0 && x.qtyReturned === x.qtyIssued); }); }
+  // Consumable lines close at checkout, so ReturnedAt is their closure time even if every leftover comes back later
+  // (leftover dates live in StockMoves) — such loans never read as a physical "คืนครบ" (GPT r2 S3-2).
+  function loanFullyReturned(l) { return !loanHasLost(l) && (l.stockLines || []).every(function (x) { return x.lineStatus === 'cancelled' || (x.kind === 'counted' && x.qtyIssued > 0 && x.qtyReturned === x.qtyIssued); }); }
   function closedText(l) { return loanHasLost(l) ? 'ปิดใบ (มีของสูญหาย)' : loanFullyReturned(l) ? 'คืนครบ' : 'ปิดใบ'; }
   function loanStatusText(l) { return l.status === 'returned' ? closedText(l) : (LOAN_STATUS[l.status] || l.status); }
   function loanPillClass(l) { return l.status === 'returned' && loanHasLost(l) ? 'lost' : l.status; }
@@ -1282,7 +1294,7 @@
     var q = Number(v.trim()); if (!(q >= 1 && q <= x.qtyUsed && Math.floor(q) === q)) { toast('จำนวนต้องเป็นจำนวนเต็ม 1–' + x.qtyUsed, true); return; }
     btn.disabled = true; var cur = sheetIsCurrent();
     apiPost('stock_return_leftover', { loanId: loanId, stockId: stockId, qty: q }).then(function () { if (cur()) toast('คืนเข้าสต็อก ' + q + ' ' + x.unit + ' แล้ว'); return reload(); })
-      .catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
+      .catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { if (cur()) btn.disabled = false; });
   }
   function openLoan(id) {
     var l = S.loans.find(function (x) { return x.loanId === id; }); if (!l) return;
