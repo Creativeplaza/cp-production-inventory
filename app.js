@@ -1613,17 +1613,55 @@
       loadAllLoans().then(function () { if (dg === S.dataGen) renderReport(); }).catch(function (e) { if (dg === S.dataGen) $('#repCount').textContent = 'โหลดประวัติไม่ครบ: ' + errText(e); });
     }
     var r = reportRows();
-    $('#repCount').textContent = r.rows.length + ' แถว' + (r.rows.length > 300 ? ' (แสดง 300 แรก, CSV ครบ)' : '') + (t !== 'register' && !allLoans && S.loansTruncated ? ' · กำลังโหลดเพิ่ม…' : '');
+    $('#repCount').textContent = r.rows.length + ' แถว' + (r.rows.length > 300 ? ' (แสดง 300 แรก, Excel ครบ)' : '') + (t !== 'register' && !allLoans && S.loansTruncated ? ' · กำลังโหลดเพิ่ม…' : '');
     $('#repTable').innerHTML = '<thead><tr>' + r.head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
       (r.rows.length ? r.rows.slice(0, 300).map(function (row) {
         return '<tr>' + row.map(function (c, i) { var v = (r.head[i] || '').indexOf('กำหนดคืน') === 0 && c ? fmtDate(c) : c; return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
       }).join('') : '<tr><td colspan="' + r.head.length + '" class="muted">ไม่มีข้อมูล</td></tr>') + '</tbody>';
   }
-  // CSV: UTF-8 BOM so Excel reads Thai; cells starting with = + - @ get a leading ' (formula injection guard).
-  function csvCell(v) {
-    var s = String(v == null ? '' : v);
-    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
-    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  // Excel export: a minimal .xlsx (stored ZIP, no compression, no third-party library). Text cells are
+  // inline strings, so nothing a user typed is ever evaluated as a formula; numbers stay numeric.
+  var CRC_T = (function () { var t = [], c, n, k; for (n = 0; n < 256; n++) { c = n; for (k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zipStore(files) {
+    var enc = new TextEncoder(), parts = [], cen = [], off = 0;
+    function u16(v) { return [v & 255, (v >>> 8) & 255]; }
+    function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+      var common = [].concat(u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+      var loc = new Uint8Array([].concat(u32(0x04034b50), common)); parts.push(loc, name, data);
+      cen.push(new Uint8Array([].concat(u32(0x02014b50), u16(20), common, u16(0), u16(0), u16(0), u32(0), u32(off))), name);
+      off += loc.length + name.length + data.length;
+    });
+    var cenLen = cen.reduce(function (a, b) { return a + b.length; }, 0);
+    var end = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cenLen), u32(off), u16(0)));
+    return new Blob(parts.concat(cen, [end]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+  function xmlEsc(v) { return String(v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function colName(i) { var s = ''; i++; while (i) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = (i - m - 1) / 26; } return s; }
+  function buildXlsx(head, rows, sheetName) {
+    var all = [head].concat(rows);
+    var widths = head.map(function (h, c) { var w = 8; all.slice(0, 500).forEach(function (r) { w = Math.max(w, String(r[c] == null ? '' : r[c]).length + 2); }); return Math.min(w, 45); });
+    var sd = all.map(function (r, ri) {
+      return '<row r="' + (ri + 1) + '">' + r.map(function (v, ci) {
+        var ref = colName(ci) + (ri + 1), st = ri ? '' : ' s="1"';
+        if (typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"' + st + '><v>' + v + '</v></c>';
+        if (v == null || v === '') return '';
+        return '<c r="' + ref + '" t="inlineStr"' + st + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+      }).join('') + '</row>';
+    }).join('');
+    var X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    return zipStore([
+      { name: '[Content_Types].xml', data: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { name: '_rels/.rels', data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: 'xl/workbook.xml', data: X + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(sheetName.replace(/[\[\]:*?\/\\]/g, '').slice(0, 31)) + '" sheetId="1" r:id="rId1"/></sheets></workbook>' },
+      { name: 'xl/_rels/workbook.xml.rels', data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: 'xl/styles.xml', data: X + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><name val="Tahoma"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEDE7F6"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' },
+      { name: 'xl/worksheets/sheet1.xml', data: X + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>' +
+        widths.map(function (w, i) { return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols><sheetData>' + sd + '</sheetData>' +
+        (rows.length ? '<autoFilter ref="A1:' + colName(head.length - 1) + (rows.length + 1) + '"/>' : '') + '</worksheet>' }
+    ]);
   }
   // Chrome/Edge desktop: real "Save as" dialog that remembers the chosen folder (id 'cpi-reports'), so the
   // user can keep a dedicated reports folder. Elsewhere (Safari, mobile): normal download.
@@ -1632,12 +1670,11 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
   var csvSeq = 0;
-  function saveCsv(csv, filename) {
-    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  function saveCsv(blob, filename) {
     if (!window.showSaveFilePicker) { downloadCsv(blob, filename); return; }
     var g = S.gen, dg = S.dataGen, STALE = { name: 'StaleExport' };
     function stale() { return g !== S.gen || dg !== S.dataGen; }
-    window.showSaveFilePicker({ id: 'cpi-reports', startIn: 'downloads', suggestedName: filename, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] })
+    window.showSaveFilePicker({ id: 'cpi-reports', startIn: 'downloads', suggestedName: filename, types: [{ description: 'Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }] })
       .then(function (h) {
         if (stale()) return; // logged out / data reloaded while the dialog was open
         return h.createWritable().then(function (w) {
@@ -1667,16 +1704,15 @@
         renderReport();
         // A Save-as dialog needs a fresh user click (the original click's activation is gone after the
         // async load), so ask for a second click there; plain downloads can continue straight away.
-        if (window.showSaveFilePicker) toast('โหลดประวัติครบแล้ว — กด Export CSV อีกครั้งเพื่อบันทึก'); else btn.click();
+        if (window.showSaveFilePicker) toast('โหลดประวัติครบแล้ว — กด Export Excel อีกครั้งเพื่อบันทึก'); else btn.click();
       }).catch(function (e) { btn.disabled = false; if (dg === S.dataGen) toast('Export ไม่ได้ — โหลดประวัติไม่ครบ: ' + errText(e), true); });
       return;
     }
     var r = reportRows();
-    var csv = '﻿' + [r.head].concat(r.rows).map(function (row) { return row.map(csvCell).join(','); }).join('\r\n');
     var name = { register: 'ทะเบียนทรัพย์สิน', history: 'ประวัติเบิกคืน', overdue: 'ค้างคืน' }[S.report];
     // Unique name per export: Bangkok date-time to the millisecond + a per-page counter → never overwrites.
     var iso = new Date(Date.now() + 7 * 3600e3).toISOString(), stamp = iso.slice(0, 10) + '_' + iso.slice(11, 19).replace(/:/g, '') + '-' + iso.slice(20, 23);
-    saveCsv(csv, 'CP-CHub-' + name + '-' + stamp + '-' + (++csvSeq) + '.csv');
+    saveCsv(buildXlsx(r.head, r.rows, name), 'CP-CHub-' + name + '-' + stamp + '-' + (++csvSeq) + '.xlsx');
   });
 
   /* ---------- settings: categories (contract §15) ---------- */
