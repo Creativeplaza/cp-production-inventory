@@ -496,3 +496,14 @@ tbody tr:last-child td{border-bottom:0}
 .kind-switch .chip{display:grid;gap:2px;text-align:left;padding:10px 14px;border-radius:var(--radius-sm);height:auto}
 .kind-switch .chip small{font-size:16px;color:var(--muted);font-weight:400}
 .kind-switch .chip[aria-pressed=true]{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft)}
+/* v0.14 per-unit codes */
+.unit-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.unit-list li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line-hi);border-radius:var(--radius-sm);background:var(--card)}
+.unit-open{flex:1;text-align:left;background:none;border:0;padding:0;cursor:pointer;color:var(--text)}
+.unit-tools{gap:8px}
+.unit-issue{display:grid!important;gap:8px}
+.unit-issue .u-list{display:flex;flex-wrap:wrap;gap:6px 14px;max-height:220px;overflow:auto}
+.u-row{display:flex;align-items:center;gap:6px;color:var(--text)}
+.u-ret{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.u-ret select{max-width:60%}
+.sku-auto{align-self:end;margin:0 0 10px}

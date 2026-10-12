@@ -50,6 +50,7 @@
   function load() { var d; try { d = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch (e) { d = seed(); }
     if (!d.stock) { var s0 = seed(); d.stock = s0.stock; d.stockMoves = []; d.stockOutcomes = []; if (!d.categories.some(function (c) { return c.code === 'SVN'; })) d.categories.push({ code: 'SVN', name: 'วัสดุสิ้นเปลือง', active: true }); }
     if (!d.stockMoves.length) d.stock.forEach(function (x) { if (x.onHand > 0) d.stockMoves.push({ moveId: 'M' + (d.stockMoves.length + 1), at: x.createdAt, actor: 'admin', stockId: x.stockId, type: 'create', qty: x.onHand, loanId: '', note: '' }); });
+    if (!d.units) { d.units = []; d.loanUnits = []; d.unitEvents = []; d.stock.forEach(function (x) { if (x.kind === 'counted') for (var i = 1; i <= x.onHand; i++) d.units.push({ unitId: x.sku + '-' + String(i).padStart(2, '0'), stockId: x.stockId, status: 'available', holder: '', loanId: '', seq: i }); }); }
     mockDb = d; return d; }
   function save(db) { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
   var CODES = { 400: 'VALIDATION', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'BAD_TRANSITION', 429: 'RATE_LIMITED', 503: 'BUSY' };
@@ -85,17 +86,33 @@
   }
   function stockOut(db, x) {
     var r = reservedOf(db, x.stockId), av = x.onHand - r;
-    return Object.assign({}, x, { reserved: r, available: av, deficit: Math.max(0, r - x.onHand), lowStock: x.minLevel > 0 && av <= x.minLevel });
+    var o = Object.assign({}, x, { reserved: r, available: av, deficit: Math.max(0, r - x.onHand), lowStock: x.minLevel > 0 && av <= x.minLevel });
+    if (x.kind === 'counted') o.unitCounts = unitCounts(db, x.stockId);
+    return o;
   }
   function move(db, actor, id, type, qty, loanId, note) { db.stockMoves.push({ moveId: 'M' + (db.stockMoves.length + 1), at: new Date().toISOString(), actor: actor, stockId: id, type: type, qty: qty, loanId: loanId || '', note: note || '' }); }
   function outcome(db, actor, loanId, id, ret, used, lost, reason) { db.stockOutcomes.push({ outcomeId: 'O' + (db.stockOutcomes.length + 1), at: new Date().toISOString(), actor: actor, loanId: loanId, stockId: id, returned: ret, used: used, lost: lost, reason: reason || '' }); }
   function isInt(v, lo, hi) { return typeof v === 'number' && Math.floor(v) === v && v >= lo && v <= hi; }
   function outstanding(x) { return x.qtyIssued - x.qtyReturned - x.qtyUsed - x.qtyLost; }
   var LEFTOVER_MS = 30 * 864e5;
+  // v0.14 §24: auto SKU {CAT}-{NNN} shared by assets + stock; per-unit tracking for counted
+  function nextSku(db, cat) {
+    var re = new RegExp('^' + cat + '-(\\d{3,})$'), m = 0;
+    db.assets.concat(db.deletedAssets || [], db.stock || []).forEach(function (x) { var k = re.exec(x.sku || ''); if (k) m = Math.max(m, +k[1]); });
+    return cat + '-' + String(m + 1).padStart(3, '0');
+  }
+  function unitsOf(db, id) { return db.units.filter(function (x) { return x.stockId === id; }); }
+  function unitCounts(db, id) { var c = { available: 0, out: 0, inspection: 0, lost: 0, retired: 0 }; unitsOf(db, id).forEach(function (x) { c[x.status]++; }); return c; }
+  function uev(db, actor, x, from, to, loanId, reason, note) { db.unitEvents.push({ eventId: 'U' + (db.unitEvents.length + 1), at: new Date().toISOString(), actor: actor, unitId: x.unitId, stockId: x.stockId, loanId: loanId || '', from: from, to: to, reason: reason || '', note: note || '' }); }
+  function addUnits(db, actor, sx, n) {
+    var seq = unitsOf(db, sx.stockId).reduce(function (m, x) { return Math.max(m, x.seq); }, 0);
+    for (var i = 1; i <= n; i++) { var u0 = { unitId: sx.sku + '-' + String(seq + i).padStart(2, '0'), stockId: sx.stockId, status: 'available', holder: '', loanId: '', seq: seq + i }; db.units.push(u0); uev(db, actor, u0, '', 'available', '', '', ''); }
+  }
+  function unitOut(db, x) { return Object.assign({}, x, { holderName: x.holder ? nameOf(db, x.holder) : '' }); }
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
     var o = JSON.parse(JSON.stringify(l));
-    o.stockLines = (l.stockLines || []).map(function (x) { var y = Object.assign({}, x); if (x.kind === 'consumable' && x.qtyIssued > 0 && l.checkedOutAt) y.leftoverUntil = new Date(Date.parse(l.checkedOutAt) + LEFTOVER_MS).toISOString(); return y; });
+    o.stockLines = (l.stockLines || []).map(function (x) { var y = Object.assign({}, x); if (x.kind === 'counted') { y.qtyDamaged = x.qtyDamaged || 0; y.units = db.loanUnits.filter(function (z) { return z.loanId === l.loanId && z.stockId === x.stockId; }).map(function (z) { return { unitId: z.unitId, outcome: z.outcome }; }); } if (x.kind === 'consumable' && x.qtyIssued > 0 && l.checkedOutAt) y.leftoverUntil = new Date(Date.parse(l.checkedOutAt) + LEFTOVER_MS).toISOString(); return y; });
     o.requesterName = nameOf(db, l.requester); o.approverName = l.approver ? nameOf(db, l.approver) : ''; o.approvedByName = l.approvedBy ? nameOf(db, l.approvedBy) : '';
     o.items.forEach(function (it) {
       var a = assetBy(db, it.assetId), del = !a && (db.deletedAssets || []).find(function (x) { return x.assetId === it.assetId; });
@@ -130,6 +147,18 @@
       deletedUsers: (db.deletedUsers || []).map(function (x) { return { username: x.username, name: x.name }; }),
       people: db.users.filter(function (x) { return x.active; }).map(function (x) { return profileOf(db, x); }),
       me: Object.assign(profileOf(db, u), { role: u.role, perms: perms(u), avatarPhotoId: u.avatarPhotoId || '' }), serverTime: Date.now() };
+    if (api === 'listStockUnits') {
+      var sx0 = stockBy(db, p.stockId); if (!sx0) return err(404, 'NOT_FOUND');
+      var all = unitsOf(db, sx0.stockId).filter(function (x) { return !p.status || x.status === p.status; }).sort(function (a, c) { return a.seq - c.seq; });
+      var lim = Math.min(200, p.limit || 200), start = p.cursor ? +p.cursor : 0; if (p.cursor && !(start > 0)) return err(400, 'VALIDATION');
+      var page = all.slice(start, start + lim);
+      return { success: true, items: page.map(function (x) { return unitOut(db, x); }), cursor: start + lim < all.length ? String(start + lim) : '', hasMore: start + lim < all.length };
+    }
+    if (api === 'getUnit') {
+      var ux = db.units.find(function (x) { return x.unitId === p.unitId; }); if (!ux) return err(404, 'NOT_FOUND');
+      var hist = db.unitEvents.filter(function (e) { return e.unitId === ux.unitId; }).slice().reverse();
+      return { success: true, unit: unitOut(db, ux), item: stockOut(db, stockBy(db, ux.stockId)), history: hist.slice(0, 100).map(function (e) { return Object.assign({}, e, { actorName: nameOf(db, e.actor) }); }), historyTruncated: hist.length > 100 };
+    }
     if (api === 'getStock') {
       var sx = stockBy(db, p.stockId); if (!sx) return err(404, 'NOT_FOUND');
       var mv = db.stockMoves.filter(function (m) { return m.stockId === sx.stockId; }).slice().reverse();
@@ -272,25 +301,35 @@
       }
       case 'asset_create': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
+        if ('sku' in b) return err(400, 'VALIDATION');
+        var ref = null;
+        if (b.sameAs !== undefined) {
+          if ('name' in b || 'model' in b || 'category' in b) return err(400, 'VALIDATION');
+          ref = assetBy(db, b.sameAs); if (!ref) return err(404, 'NOT_FOUND');
+          b.category = ref.category; b.name = ref.name; b.model = ref.model;
+          if (b.division === undefined) b.division = ref.division || 'production';
+          if (b.location === undefined) b.location = ref.location;
+        }
         if (!db.categories.some(function (x) { return x.code === b.category && x.active; })) return err(400, 'หมวดนี้ปิดใช้หรือไม่มีอยู่');
         if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
         var pe = photoSet(b.photoIds, 'asset', 1, 5, null); if (pe) return err(400, pe === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID');
         if (!/^[A-Z]{2,4}$/.test(b.category || '')) return err(400, 'หมวดไม่ถูกต้อง');
-        if (!/^[A-Z0-9-]{2,24}$/.test(b.sku || '')) return err(400, 'SKU ไม่ถูกต้อง');
         if (!b.name) return err(400, 'ต้องระบุชื่อ');
+        var skuA = ref ? ref.sku : nextSku(db, b.category);
         // §17.2: next number = max over live + deleted assets of this prefix (never reuse an AssetID)
         var n = db.assets.concat(db.deletedAssets || []).reduce(function (m, x) { var k = x.assetId.split('-'); return k[0] === b.category ? Math.max(m, +k[1] || 0) : m; }, 0) + 1;
         var id = b.category + '-' + String(n).padStart(4, '0');
-        var na = { assetId: id, sku: b.sku, name: b.name, category: b.category, model: b.model || '', serial: b.serial || '', location: b.location || '',
+        var na = { assetId: id, sku: skuA, name: b.name, category: b.category, model: b.model || '', serial: b.serial || '', location: b.location || '',
           status: 'available', currentLoanId: '', holder: '', project: '', dueDate: '', notes: b.notes || '', division: b.division || 'production', createdAt: now, updatedAt: now };
         db.assets.push(na); attach(b.photoIds, 'asset', id); ev(db, u.username, 'asset_create', '', id, '', 'available', '', rid); save(db); return { success: true, asset: divOut(na) };
       }
       case 'asset_update': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
+        if ('sku' in b) return err(400, 'VALIDATION');
         var ua = assetBy(db, b.assetId); if (!ua) return err(404, 'NOT_FOUND');
         if (b.photoIds !== undefined) { var pu = photoSet(b.photoIds, 'asset', 1, 5, ua.assetId); if (pu) return err(400, pu === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID'); attach(b.photoIds, 'asset', ua.assetId); }
         if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
-        ['sku', 'name', 'model', 'serial', 'location', 'notes', 'division'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
+        ['name', 'model', 'serial', 'location', 'notes', 'division'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
         if (!ua.division) ua.division = 'production'; // like the backend: an edit writes the default into a blank legacy row
         if (b.status && b.status !== ua.status) {
           if (ua.currentLoanId) return err(409, 'BAD_TRANSITION');
@@ -344,12 +383,19 @@
         if (!loan) return err(404, 'NOT_FOUND'); if (!P.loanIssue) return err(403, 'FORBIDDEN');
         if (loan.status !== 'approved') return err(409, 'BAD_TRANSITION');
         // v0.13 §23.5: one checkout; validate every stock line before issuing anything
-        var lines = loan.stockLines || [], issue = {};
+        var lines = loan.stockLines || [], issue = {}, pickU = {}, seenU = {};
         if (b.stockIssue !== undefined) {
           if (!Array.isArray(b.stockIssue) || b.stockIssue.length !== lines.length) return err(400, 'VALIDATION');
           for (var q1 = 0; q1 < b.stockIssue.length; q1++) { var e1 = b.stockIssue[q1]; var ln = lines.find(function (x) { return x.stockId === e1.stockId; });
-            if (!ln || (e1.stockId in issue) || !isInt(e1.qty, 0, ln.qtyRequested)) return err(400, 'VALIDATION'); issue[e1.stockId] = e1.qty; }
-        } else lines.forEach(function (x) { issue[x.stockId] = x.qtyRequested; });
+            if (!ln || (e1.stockId in issue)) return err(400, 'VALIDATION');
+            if (ln.kind === 'counted') {
+              if ('qty' in e1 || !Array.isArray(e1.unitIds) || e1.unitIds.length > ln.qtyRequested) return err(400, 'VALIDATION');
+              for (var q0 = 0; q0 < e1.unitIds.length; q0++) { var uid = e1.unitIds[q0], un = db.units.find(function (x) { return x.unitId === uid; });
+                if (seenU[uid] || !un || un.stockId !== ln.stockId) return err(400, 'VALIDATION'); if (un.status !== 'available') return err(409, 'BAD_TRANSITION', { unitId: uid }); seenU[uid] = 1; }
+              pickU[e1.stockId] = e1.unitIds; issue[e1.stockId] = e1.unitIds.length;
+            } else { if ('unitIds' in e1 || !isInt(e1.qty, 0, ln.qtyRequested)) return err(400, 'VALIDATION'); issue[e1.stockId] = e1.qty; }
+          }
+        } else { if (lines.some(function (x) { return x.kind === 'counted'; })) return err(400, 'VALIDATION'); lines.forEach(function (x) { issue[x.stockId] = x.qtyRequested; }); }
         for (var q2 = 0; q2 < lines.length; q2++) { var sx2 = stockBy(db, lines[q2].stockId); if (issue[lines[q2].stockId] > sx2.onHand) return err(409, 'STOCK_SHORT', { stockId: sx2.stockId, onHand: sx2.onHand }); }
         loan.checkedOutAt = now; loan.checkedOutBy = u.username;
         loan.items.forEach(function (i) { i.itemStatus = 'checked_out'; i.checkedOutAt = now; i.checkedOutBy = u.username; i.conditionOut = b.conditionOut || ''; setAsset(db, i.assetId, 'checked_out', loan, u.username, 'loan_checkout', rid); });
@@ -357,7 +403,11 @@
           var q = issue[x.stockId], sx3 = stockBy(db, x.stockId); x.qtyIssued = q; x.updatedAt = now;
           if (q > 0) { sx3.onHand -= q; sx3.updatedAt = now; move(db, u.username, x.stockId, 'issue', -q, loan.loanId, ''); }
           if (x.kind === 'consumable') { x.qtyUsed = q; x.lineStatus = 'closed'; if (q > 0) outcome(db, u.username, loan.loanId, x.stockId, 0, q, 0, ''); }
-          else x.lineStatus = q > 0 ? 'issued' : 'closed';
+          else {
+            x.lineStatus = q > 0 ? 'issued' : 'closed'; x.qtyDamaged = 0;
+            (pickU[x.stockId] || []).forEach(function (uid) { var un = db.units.find(function (y) { return y.unitId === uid; });
+              un.status = 'out'; un.holder = loan.requester; un.loanId = loan.loanId; db.loanUnits.push({ loanId: loan.loanId, stockId: x.stockId, unitId: uid, issuedAt: now, outcome: 'out', outcomeAt: '' }); uev(db, u.username, un, 'available', 'out', loan.loanId, '', ''); });
+          }
         });
         var open1 = loan.items.length > 0 || lines.some(function (x) { return x.lineStatus === 'issued'; });
         loan.status = open1 ? 'checked_out' : 'returned'; if (!open1) loan.returnedAt = now;
@@ -373,9 +423,13 @@
           var r3 = sr[q3], l3 = (loan.stockLines || []).find(function (x) { return x.stockId === r3.stockId; });
           if (!l3) return err(400, 'VALIDATION'); if (l3.kind !== 'counted') return err(400, 'WRONG_KIND');
           if (l3.lineStatus !== 'issued') return err(409, 'BAD_TRANSITION');
-          if (![r3.returned, r3.used, r3.lost].every(function (v) { return isInt(v, 0, 9999); })) return err(400, 'VALIDATION');
-          var tot = r3.returned + r3.used + r3.lost; if (tot < 1 || tot > outstanding(l3)) return err(400, 'VALIDATION');
-          if ((r3.used > 0 || r3.lost > 0) && !String(r3.reason || '').trim()) return err(400, 'ต้องระบุเหตุผลเมื่อใช้หมด/หาย');
+          // v0.14 §24.4: counted returns are per unit
+          if ('returned' in r3 || 'used' in r3 || 'lost' in r3 || !Array.isArray(r3.units) || !r3.units.length) return err(400, 'VALIDATION');
+          var su = {};
+          for (var q4 = 0; q4 < r3.units.length; q4++) { var ru = r3.units[q4], lu = db.loanUnits.find(function (y) { return y.loanId === loan.loanId && y.unitId === ru.unitId; });
+            if (su[ru.unitId] || ['returned', 'damaged', 'lost', 'used'].indexOf(ru.outcome) < 0) return err(400, 'VALIDATION');
+            if (!lu || lu.outcome !== 'out' || lu.stockId !== r3.stockId) return err(400, 'VALIDATION'); su[ru.unitId] = 1; }
+          if (r3.units.some(function (x) { return x.outcome !== 'returned'; }) && !String(r3.reason || '').trim()) return err(400, 'ต้องระบุเหตุผลเมื่อชำรุด/หาย/ใช้หมด');
         }
         if (rs.some(function (x) { return !String(x.conditionIn || '').trim(); })) return err(400, 'ต้องระบุสภาพตอนคืน');
         if (rs.some(function (x) { return x.damaged && x.lost; })) return err(400, 'เสียหายและสูญหายพร้อมกันไม่ได้');
@@ -387,10 +441,16 @@
           if (!it || it.itemStatus !== 'checked_out') return err(409, 'BAD_TRANSITION', { assetIds: [rs[k].assetId] });
         }
         sr.forEach(function (x) {
-          var l4 = loan.stockLines.find(function (y) { return y.stockId === x.stockId; }), sx4 = stockBy(db, x.stockId);
-          l4.qtyReturned += x.returned; l4.qtyUsed += x.used; l4.qtyLost += x.lost; l4.updatedAt = now; if (!outstanding(l4)) l4.lineStatus = 'closed';
-          if (x.returned) { sx4.onHand += x.returned; sx4.updatedAt = now; move(db, u.username, x.stockId, 'return', x.returned, loan.loanId, x.note || ''); }
-          outcome(db, u.username, loan.loanId, x.stockId, x.returned, x.used, x.lost, x.reason || '');
+          var l4 = loan.stockLines.find(function (y) { return y.stockId === x.stockId; }), sx4 = stockBy(db, x.stockId), cnt = { returned: 0, damaged: 0, lost: 0, used: 0 };
+          var TO = { returned: 'available', damaged: 'inspection', lost: 'lost', used: 'retired' };
+          x.units.forEach(function (ru) {
+            var lu = db.loanUnits.find(function (y) { return y.loanId === loan.loanId && y.unitId === ru.unitId; }), un = db.units.find(function (y) { return y.unitId === ru.unitId; });
+            lu.outcome = ru.outcome; lu.outcomeAt = now; un.status = TO[ru.outcome]; un.holder = ''; un.loanId = ''; cnt[ru.outcome]++;
+            uev(db, u.username, un, 'out', un.status, loan.loanId, ru.outcome === 'returned' ? '' : x.reason, ru.note || '');
+          });
+          l4.qtyReturned += cnt.returned + cnt.damaged; l4.qtyDamaged = (l4.qtyDamaged || 0) + cnt.damaged; l4.qtyUsed += cnt.used; l4.qtyLost += cnt.lost; l4.updatedAt = now; if (!outstanding(l4)) l4.lineStatus = 'closed';
+          if (cnt.returned) { sx4.onHand += cnt.returned; sx4.updatedAt = now; move(db, u.username, x.stockId, 'return', cnt.returned, loan.loanId, ''); }
+          outcome(db, u.username, loan.loanId, x.stockId, cnt.returned + cnt.damaged, cnt.used, cnt.lost, x.reason || ''); db.stockOutcomes[db.stockOutcomes.length - 1].damaged = cnt.damaged;
         });
         rs.forEach(function (x) {
           var it = loan.items.find(function (i) { return i.assetId === x.assetId; });
@@ -408,17 +468,19 @@
       case 'stock_create': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
         if (!db.categories.some(function (x) { return x.code === b.category && x.active; })) return err(400, 'หมวดนี้ปิดใช้หรือไม่มีอยู่');
-        if (DIVS.indexOf(b.division) < 0 || ['consumable', 'counted'].indexOf(b.kind) < 0 || !String(b.name || '').trim() || !/^[A-Z0-9-]{2,24}$/.test(b.sku || '') || !String(b.unit || '').trim() || String(b.unit).length > 12) return err(400, 'VALIDATION');
+        if (DIVS.indexOf(b.division) < 0 || ['consumable', 'counted'].indexOf(b.kind) < 0 || 'sku' in b || !String(b.name || '').trim() || !String(b.unit || '').trim() || String(b.unit).length > 12) return err(400, 'VALIDATION');
         if (!isInt(b.initialQty, 0, 1e6) || !isInt(b.minLevel, 0, 1e6)) return err(400, 'VALIDATION');
+        if (b.kind === 'counted' && b.initialQty > 200) return err(409, 'CAPACITY');
         var nS = db.stock.reduce(function (m, x) { var k = x.stockId.split('-S'); return k[0] === b.category ? Math.max(m, +k[1] || 0) : m; }, 0) + 1;
         if (nS > 9999) return err(409, 'CAPACITY');
-        var ns = { stockId: b.category + '-S' + String(nS).padStart(4, '0'), sku: b.sku, name: b.name.trim(), category: b.category, division: b.division, kind: b.kind, unit: b.unit.trim(), onHand: b.initialQty, minLevel: b.minLevel, location: b.location || '', notes: b.notes || '', active: true, createdAt: now, updatedAt: now };
+        var ns = { stockId: b.category + '-S' + String(nS).padStart(4, '0'), sku: nextSku(db, b.category), name: b.name.trim(), category: b.category, division: b.division, kind: b.kind, unit: b.unit.trim(), onHand: b.initialQty, minLevel: b.minLevel, location: b.location || '', notes: b.notes || '', active: true, createdAt: now, updatedAt: now };
         db.stock.push(ns); if (b.initialQty > 0) move(db, u.username, ns.stockId, 'create', b.initialQty, '', '');
+        if (ns.kind === 'counted') addUnits(db, u.username, ns, b.initialQty);
         ev(db, u.username, 'stock_create', '', '', '', '', ns.stockId, rid); save(db); return { success: true, stock: stockOut(db, ns) };
       }
       case 'stock_update': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
-        if ('unit' in b || 'onHand' in b || 'category' in b) return err(400, 'VALIDATION');
+        if ('unit' in b || 'onHand' in b || 'category' in b || 'sku' in b || 'kind' in b) return err(400, 'VALIDATION');
         var su = stockBy(db, b.stockId); if (!su) return err(404, 'NOT_FOUND');
         if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
         if (b.kind !== undefined && ['consumable', 'counted'].indexOf(b.kind) < 0) return err(400, 'VALIDATION');
@@ -432,14 +494,29 @@
         var warn = null;
         if (b.action === 'stock_receive') {
           if (!isInt(b.qty, 1, 1e6) || sr2.onHand + b.qty > 1e6) return err(400, 'VALIDATION');
+          if (sr2.kind === 'counted' && (b.qty > 200 || unitsOf(db, sr2.stockId).length + b.qty > 9999)) return err(409, 'CAPACITY');
           sr2.onHand += b.qty; move(db, u.username, sr2.stockId, 'receive', b.qty, '', b.note || '');
+          if (sr2.kind === 'counted') addUnits(db, u.username, sr2, b.qty);
         } else {
+          if (sr2.kind === 'counted') return err(400, 'WRONG_KIND');
           if (!isInt(b.countedQty, 0, 1e6) || !String(b.reason || '').trim()) return err(400, 'VALIDATION');
           var dlt = b.countedQty - sr2.onHand; if (!dlt) return err(400, 'NO_CHANGE');
           sr2.onHand = b.countedQty; move(db, u.username, sr2.stockId, 'adjust', dlt, '', b.reason);
           var o2 = stockOut(db, sr2); if (o2.available < 0) warn = { warning: 'RESERVED_EXCEEDS', deficit: o2.deficit };
         }
         sr2.updatedAt = now; save(db); return Object.assign({ success: true, stock: stockOut(db, sr2) }, warn || {});
+      }
+      case 'stock_unit_update': {
+        if (!P.assetManage) return err(403, 'FORBIDDEN');
+        var uu = db.units.find(function (x) { return x.unitId === b.unitId; }); if (!uu) return err(404, 'NOT_FOUND');
+        if (['available', 'inspection', 'lost', 'retired'].indexOf(b.status) < 0 || !String(b.reason || '').trim()) return err(400, 'VALIDATION');
+        if (uu.status === b.status) return err(400, 'NO_CHANGE');
+        if (uu.status === 'out' || uu.status === 'lost' || uu.status === 'retired') return err(409, 'BAD_TRANSITION');
+        var sxu = stockBy(db, uu.stockId), from = uu.status;
+        if (from === 'available') { sxu.onHand -= 1; move(db, u.username, sxu.stockId, 'adjust', -1, '', b.reason); }
+        if (b.status === 'available') { sxu.onHand += 1; move(db, u.username, sxu.stockId, 'adjust', 1, '', b.reason); }
+        uu.status = b.status; uev(db, u.username, uu, from, b.status, '', b.reason, b.note || ''); save(db);
+        return { success: true, unit: unitOut(db, uu), stock: stockOut(db, sxu) };
       }
       case 'stock_return_leftover': {
         if (!P.loanIssue) return err(403, 'FORBIDDEN');
@@ -524,7 +601,7 @@
     return err(400, 'Unknown action');
   }
 
-  var READS = ['me', 'bundle', 'getAsset', 'getStock', 'listLoans', 'listUsers', 'listInvites', 'listRoles', 'getPhoto', 'assetCovers'];
+  var READS = ['me', 'bundle', 'getAsset', 'getStock', 'listStockUnits', 'getUnit', 'listLoans', 'listUsers', 'listInvites', 'listRoles', 'getPhoto', 'assetCovers'];
   window.CPI_MOCK = {
     post: function (b) { return new Promise(function (res) { setTimeout(function () { res(READS.indexOf(b.action) >= 0 ? get(b.action, b) : post(b)); }, 180); }); },
     reset: function () { localStorage.removeItem(KEY); }

@@ -77,6 +77,7 @@
   ERR_TEXT.PHOTO_INVALID = 'รูปไม่ถูกต้องหรือหมดอายุ กรุณาอัปรูปใหม่'; ERR_TEXT.PAYLOAD_TOO_LARGE = 'ไฟล์รูปใหญ่เกินไป';
   ERR_TEXT.CONFIRM_MISMATCH = 'ข้อความยืนยันไม่ตรง'; ERR_TEXT.ASSET_IN_USE = 'อุปกรณ์นี้อยู่ในใบเบิกที่ยังไม่ปิด ลบไม่ได้';
   ERR_TEXT.STOCK_SHORT = 'ของไม่พอตามจำนวนที่ขอ — ลดจำนวนแล้วลองใหม่'; ERR_TEXT.WRONG_KIND = 'ชนิดของไม่ตรงกับการทำรายการนี้'; ERR_TEXT.LEFTOVER_EXPIRED = 'เกิน 30 วันหลังจ่ายแล้ว คืนส่วนเหลือไม่ได้'; ERR_TEXT.NO_CHANGE = 'จำนวนที่นับได้เท่ากับยอดเดิม ไม่มีอะไรเปลี่ยน'; ERR_TEXT.CAPACITY = 'ถึงขีดจำกัดของระบบแล้ว (รหัสหรือตารางข้อมูลเต็ม) — แจ้งผู้ดูแลระบบ';
+  ERR_TEXT.MAINTENANCE = 'ระบบกำลังปรับปรุงส่วนของนับจำนวน — ลองใหม่ในอีกสักครู่';
   ERR_TEXT.USER_IN_USE = 'ผู้ใช้นี้ยังถือของหรือมีใบเบิกค้าง — รับคืน/ปิดใบก่อนจึงลบได้'; ERR_TEXT.SELF_DELETE = 'ลบบัญชีของตัวเองไม่ได้';
   ERR_TEXT.CATEGORY_IN_USE = 'ยังมีอุปกรณ์ในหมวดนี้ ย้ายหมวดหรือลบอุปกรณ์ก่อน';
   ERR_TEXT.INVITE_INVALID = 'รหัสเชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้ครบแล้ว'; ERR_TEXT.ROLE_IN_USE = 'ยังมีผู้ใช้หรือรหัสเชิญที่ใช้ role นี้อยู่';
@@ -324,9 +325,9 @@
     }
     return reload().then(function () {
       $('#login').hidden = true; $('#app').hidden = false;
-      var qs = new URLSearchParams(location.search), deep = qs.get('a'), deepS = qs.get('s');
-      if (deep || deepS) history.replaceState(null, '', location.pathname);
-      if (deep) openAsset(deep); else if (deepS) openStock(deepS);
+      var qs = new URLSearchParams(location.search), deep = qs.get('a'), deepS = qs.get('s'), deepU = qs.get('u');
+      if (deep || deepS || deepU) history.replaceState(null, '', location.pathname);
+      if (deep) openAsset(deep); else if (deepS) openStock(deepS); else if (deepU) openUnit(deepU);
     }).catch(function (r) { if (r && r.status !== 401) toast(errText(r), true); if (!S.me) showLogin(); });
   }
   // Speed: the API takes several seconds per call, so the last bundle is kept in this browser (tied to the current
@@ -799,7 +800,7 @@
       if (a.status === 'available' && P().loanRequest) act.push('<button class="btn primary" data-act="cart">' + (S.cart.indexOf(a.assetId) >= 0 ? 'อยู่ในตะกร้าแล้ว' : '+ ใส่ตะกร้าเบิก') + '</button>');
       if (loan) act.push('<button class="btn" data-act="loan">ดูใบเบิก ' + esc(loan.loanId) + '</button>');
       if (P().assetManage) {
-        act.push('<button class="btn" data-act="edit">แก้ไข</button>', '<button class="btn" data-act="print">พิมพ์ฉลาก</button>');
+        act.push('<button class="btn" data-act="edit">แก้ไข</button>', '<button class="btn" data-act="more">+ เพิ่มชิ้นของรุ่นนี้</button>', '<button class="btn" data-act="print">พิมพ์ฉลาก</button>');
         var inUse = !!a.currentLoanId || a.status === 'reserved' || a.status === 'checked_out';
         if (a.status === 'retired') act.push('<button class="btn" data-act="restore">กู้คืน</button>');
         else if (!inUse) act.push('<button class="btn" data-act="hide">ซ่อน (เลิกใช้งาน)</button>');
@@ -826,6 +827,7 @@
         if (b.dataset.act === 'cart') { if (S.cart.indexOf(a.assetId) < 0) toggleCart(a.assetId, true); closeSheet(); switchTab('assets'); }
         if (b.dataset.act === 'loan') openLoan(loan.loanId);
         if (b.dataset.act === 'edit') openAssetForm(a, photos);
+        if (b.dataset.act === 'more') openAssetForm(null, null, a);
         if (b.dataset.act === 'print') printLabels([a.assetId]);
         if (b.dataset.act === 'hide') {
           if (!confirm('ซ่อน ' + a.assetId + ' ' + a.name + '?\nเปลี่ยนเป็น "เลิกใช้งาน" — หายจากรายการและเบิกไม่ได้ ประวัติยังอยู่ กู้คืนได้ภายหลัง')) return;
@@ -866,10 +868,10 @@
       '<div class="row"><label>ฝ่าย *<select name="division" required>' + DIVISIONS.map(function (d) { return '<option value="' + d[0] + '"' + (d[0] === (edit ? divOf(x) : (S.divFilter || 'production')) ? ' selected' : '') + '>' + d[1] + '</option>'; }).join('') + '</select></label>' +
       (edit ? '<label>หมวด<input value="' + esc(x.category + ' · ' + catName(x.category)) + '" disabled></label></div>'
         : '<label>หมวด *<select name="category" required>' + cats().filter(function (c) { return c.active; }).map(function (c) { return '<option value="' + esc(c.code) + '"' + (c.code === defCat ? ' selected' : '') + '>' + esc(c.code + ' · ' + c.name) + '</option>'; }).join('') + '</select></label></div>') +
-      '<label>ชนิด *<select name="kind" required><option value="consumable"' + (x.kind !== 'counted' ? ' selected' : '') + '>สิ้นเปลือง — เบิกแล้วใช้หมด (เหลือคืนได้ใน 30 วัน)</option><option value="counted"' + (x.kind === 'counted' ? ' selected' : '') + '>นับจำนวน-ต้องคืน — นับทั้งตอนเบิกและตอนคืน</option></select></label>' +
-      (edit ? '<p class="muted small">เปลี่ยนชนิดมีผลกับใบเบิกใหม่เท่านั้น</p>' : '') +
+      '<label>ชนิด *<select name="kind" required' + (edit ? ' disabled' : '') + '><option value="consumable"' + (x.kind !== 'counted' ? ' selected' : '') + '>สิ้นเปลือง — เบิกแล้วใช้หมด (เหลือคืนได้ใน 30 วัน)</option><option value="counted"' + (x.kind === 'counted' ? ' selected' : '') + '>นับจำนวน-ต้องคืน — มีรหัส + QR ทุกชิ้น สแกนตอนจ่าย/คืน</option></select></label>' +
+      (edit ? '<p class="muted small">ชนิดเปลี่ยนไม่ได้หลังสร้าง</p>' : '') +
       '<label>ชื่อ *<input name="name" required maxlength="120" value="' + esc(x.name) + '"></label>' +
-      '<div class="row"><label>SKU *<input name="sku" required pattern="[A-Z0-9\\-]{2,24}" placeholder="เช่น SVN-TAPE" value="' + esc(x.sku) + '"></label>' +
+      '<div class="row">' + (edit ? '<label>SKU<input value="' + esc(x.sku) + '" disabled></label>' : '<p class="muted small sku-auto">SKU ระบบออกให้อัตโนมัติ (หมวด + เลขรัน)</p>') +
       '<label>หน่วย *<input name="unit" required maxlength="12" placeholder="ชิ้น / ม้วน / กล่อง" value="' + esc(x.unit) + '"' + (edit ? ' disabled' : '') + '></label></div>' +
       (edit ? '<p class="muted small">หน่วยเปลี่ยนไม่ได้หลังสร้าง (กันยอดเดิมเปลี่ยนความหมาย) — ต้องการหน่วยอื่นให้สร้างรายการใหม่</p>' : '<p class="muted small">นับเป็นจำนวนเต็มเท่านั้น — เลือกหน่วยที่ไม่ต้องใช้เศษ (เช่น "ม้วน" แทน "เมตร")</p>') +
       '<div class="row">' + (edit ? '' : '<label>จำนวนตั้งต้น *<input type="number" inputmode="numeric" name="initialQty" min="0" max="1000000" step="1" value="0" required></label>') +
@@ -879,13 +881,13 @@
       '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่ม') + '</button></form>');
     if (!edit) bindKindSwitch();
     var f = $('#stockForm');
-    f.sku.addEventListener('input', function () { f.sku.value = f.sku.value.toUpperCase(); });
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var btn = f.querySelector('[type=submit]');
       var min = Number(f.minLevel.value || 0), init = edit ? 0 : Number(f.initialQty.value);
       if (!(Math.floor(min) === min && min >= 0) || !(Math.floor(init) === init && init >= 0)) { toast('จำนวนต้องเป็นจำนวนเต็มไม่ติดลบ', true); return; }
-      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), minLevel: min, location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, kind: f.kind.value };
-      if (edit) body.stockId = x.stockId; else { body.category = f.category.value; body.unit = f.unit.value.trim(); body.initialQty = init; }
+      if (!edit && f.kind.value === 'counted' && init > 200) { toast('ของนับจำนวน-ต้องคืนเพิ่มได้ครั้งละไม่เกิน 200 ชิ้น (เพิ่มต่อด้วย "รับเข้า")', true); return; }
+      var body = { name: f.name.value.trim(), minLevel: min, location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value };
+      if (edit) body.stockId = x.stockId; else { body.kind = f.kind.value; body.category = f.category.value; body.unit = f.unit.value.trim(); body.initialQty = init; }
       var g = S.gen, mg = S.modal; btn.disabled = true;
       apiPost(edit ? 'stock_update' : 'stock_create', body).then(function (r) {
         if (g !== S.gen) return; if (mg === S.modal) { toast((edit ? 'บันทึก ' : 'เพิ่ม ') + r.stock.stockId + ' แล้ว'); openStock(r.stock.stockId); } reload();
@@ -905,7 +907,9 @@
       var act = [], inCart = x.stockId in S.stockCart;
       if (x.active && x.available > 0 && P().loanRequest) act.push('<button class="btn primary" data-sact="cart">' + (inCart ? 'อยู่ในตะกร้าแล้ว' : '+ ใส่ตะกร้าเบิก') + '</button>');
       if (P().assetManage) {
-        act.push('<button class="btn" data-sact="receive">รับเข้า</button>', '<button class="btn" data-sact="adjust">ตรวจนับ</button>', '<button class="btn" data-sact="edit">แก้ไข</button>', '<button class="btn" data-sact="print">พิมพ์ฉลาก</button>');
+        act.push('<button class="btn" data-sact="receive">รับเข้า</button>');
+        if (x.kind !== 'counted') act.push('<button class="btn" data-sact="adjust">ตรวจนับ</button>'); // counted: per-unit status instead (§24.4)
+        act.push('<button class="btn" data-sact="edit">แก้ไข</button>', '<button class="btn" data-sact="print">พิมพ์ฉลาก' + (x.kind === 'counted' ? 'รายการ' : '') + '</button>');
         act.push(x.active ? '<button class="btn" data-sact="hide">ซ่อน</button>' : '<button class="btn" data-sact="show">แสดงอีกครั้ง</button>');
       }
       var hist = !moves ? '<p class="muted small">กำลังโหลดประวัติ…</p>' : moves.length ? '<ul class="timeline">' + moves.map(function (m) {
@@ -923,7 +927,8 @@
         '<dl class="kv"><dt>ชนิด</dt><dd>' + esc(KIND[x.kind]) + '</dd><dt>หน่วย</dt><dd>' + esc(x.unit) + '</dd><dt>ฝ่าย</dt><dd>' + esc(divName(divOf(x))) + '</dd><dt>หมวด</dt><dd>' + esc(catName(x.category)) + '</dd>' +
         '<dt>ที่เก็บ</dt><dd>' + esc(x.location || '–') + '</dd><dt>แจ้งเตือนเมื่อเหลือ</dt><dd>' + (x.minLevel ? '≤ ' + x.minLevel + ' ' + esc(x.unit) : 'ไม่ตั้ง') + '</dd>' +
         (x.notes ? '<dt>หมายเหตุ</dt><dd>' + esc(x.notes) + '</dd>' : '') + (x.active ? '' : '<dt>สถานะ</dt><dd>ซ่อนอยู่ (เบิกใหม่ไม่ได้)</dd>') + '</dl>' +
-        '<div class="row">' + act.join('') + '</div>' + openLoans + '<h3>ประวัติเข้า-ออก</h3>' + hist;
+        '<div class="row">' + act.join('') + '</div>' + (x.kind === 'counted' ? '<h3>รายชิ้น</h3><div id="unitBox"><p class="muted small">กำลังโหลดรายชิ้น…</p></div>' : '') + openLoans + '<h3>ประวัติเข้า-ออก</h3>' + hist;
+      if (x.kind === 'counted' && moves) renderUnitBox(x, mg);
       $('#sheetBody').onclick = function (e) {
         var b = e.target.closest('[data-sact]'); if (!b) return; var a = b.dataset.sact;
         if (a === 'cart') { if (!inCart) toggleStockCart(x.stockId, 1); closeSheet(); switchTab('assets'); }
@@ -954,6 +959,78 @@
         if (mg === S.modal) openStock(x.stockId); reload();
       }).catch(function (r) { if (g === S.gen && mg === S.modal) { toast(errText(r), true); btn.disabled = false; } });
     });
+  }
+
+  // v0.14 §24: per-unit codes for counted stock ({SKU}-{NN}, own QR, picked at checkout/return)
+  var UNIT_ST = { available: 'พร้อมใช้', out: 'อยู่กับผู้เบิก', inspection: 'รอตรวจ', lost: 'สูญหาย', retired: 'เลิกใช้' };
+  var UNIT_PILL = { available: 'available', out: 'checked_out', inspection: 'inspection', lost: 'lost', retired: 'retired' };
+  function unitUrl(id) { return CFG.APP_URL + '?u=' + encodeURIComponent(id); }
+  // Read every page; a repeated or malformed cursor fails closed (never treat a first page as the whole set).
+  function loadAllUnits(stockId, status) {
+    var out = [], seen = {};
+    function page(cursor) {
+      var q = { stockId: stockId }; if (status) q.status = status; if (cursor) q.cursor = cursor;
+      return apiGet('listStockUnits', q).then(function (r) {
+        if (!r || !Array.isArray(r.items)) throw { error: 'ข้อมูลรายชิ้นไม่ครบ' };
+        out = out.concat(r.items);
+        if (!r.hasMore) return out;
+        if (!r.cursor || seen[r.cursor]) throw { error: 'โหลดรายชิ้นไม่ครบ (cursor ไม่ถูกต้อง)' };
+        seen[r.cursor] = 1; return page(r.cursor);
+      });
+    }
+    return page('');
+  }
+  function renderUnitBox(x, mg) {
+    loadAllUnits(x.stockId).then(function (units) {
+      var box = $('#unitBox'); if (mg !== S.modal || !box) return;
+      var c = x.unitCounts || {};
+      box.innerHTML = '<p class="muted small">พร้อมใช้ ' + (c.available || 0) + ' · อยู่กับผู้เบิก ' + (c.out || 0) + ' · รอตรวจ ' + (c.inspection || 0) + ' · สูญหาย ' + (c.lost || 0) + ' · เลิกใช้ ' + (c.retired || 0) + '</p>' +
+        (units.length ? '<div class="row unit-tools"><button type="button" class="btn sm" data-uall>เลือกทั้งหมด</button><button type="button" class="btn sm primary" data-uprint>พิมพ์ฉลากที่เลือก</button></div>' +
+        '<ul class="unit-list">' + units.map(function (u) {
+          return '<li><label class="unit-pick"><input type="checkbox" class="check" data-upick="' + esc(u.unitId) + '"></label><button type="button" class="unit-open" data-unit="' + esc(u.unitId) + '"><b>' + esc(u.unitId) + '</b>' +
+            (u.holder ? ' <span class="muted small">' + esc(u.holderName || userName(u.holder)) + ' · ' + esc(u.loanId) + '</span>' : '') + '</button>' + pill(UNIT_PILL[u.status] || u.status, UNIT_ST[u.status] || u.status) + '</li>';
+        }).join('') + '</ul>' : '<p class="muted small">ยังไม่มีชิ้น — เพิ่มด้วย "รับเข้า"</p>');
+      box.onclick = function (e) {
+        if (e.target.closest('[data-uall]')) { var cbs = $$('[data-upick]', box), on = cbs.some(function (cb) { return !cb.checked; }); cbs.forEach(function (cb) { cb.checked = on; }); return; }
+        if (e.target.closest('[data-uprint]')) { var ids = $$('[data-upick]', box).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.dataset.upick; }); if (!ids.length) { toast('ยังไม่ได้เลือกชิ้น', true); return; } printUnitLabels(ids, x.name); return; }
+        var o = e.target.closest('[data-unit]'); if (o) { e.stopPropagation(); openUnit(o.dataset.unit); }
+      };
+    }).catch(function (r) { var box = $('#unitBox'); if (mg === S.modal && box) box.innerHTML = '<p class="form-error">' + esc(errText(r)) + '</p>'; });
+  }
+  function printUnitLabels(ids, name) {
+    $('#printArea').innerHTML = ids.map(function (id) {
+      return '<div class="label">' + qrSvg(unitUrl(id), 2) + '<div class="t"><img class="co" src="logo-print.png" alt=""><span class="aid">' + esc(id) + '</span><span class="nm">' + esc(name) + '</span></div></div>';
+    }).join('');
+    setTimeout(function () { window.print(); }, 50);
+  }
+  // Allowed manual moves (§24.4 table): available ↔ inspection, available/inspection → lost/retired; lost/retired terminal; out only via return.
+  var UNIT_NEXT = { available: ['inspection', 'lost', 'retired'], inspection: ['available', 'lost', 'retired'] };
+  function openUnit(unitId) {
+    openSheet(unitId, '<p class="muted">กำลังโหลด…</p>');
+    var mg = S.modal;
+    apiGet('getUnit', { unitId: unitId }).then(function (r) {
+      if (mg !== S.modal) return;
+      var u = r.unit, x = r.item || {}, next = P().assetManage ? (UNIT_NEXT[u.status] || []) : [];
+      $('#sheetTitle').textContent = u.unitId + ' · ' + (x.name || '');
+      $('#sheetBody').innerHTML =
+        '<div class="qr-box">' + qrSvg(unitUrl(u.unitId)) + '<div>' + pill(UNIT_PILL[u.status] || u.status, UNIT_ST[u.status] || u.status) + '<p class="muted small">' + esc(x.sku || '') + ' · ' + esc(x.stockId || u.stockId) + '</p></div></div>' +
+        '<dl class="kv"><dt>รายการ</dt><dd>' + esc(x.name || '–') + '</dd>' + (u.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(u.holderName || userName(u.holder)) + '</dd><dt>ใบเบิก</dt><dd>' + esc(u.loanId) + '</dd>' : '') + '</dl>' +
+        '<div class="row">' + next.map(function (st) { return '<button class="btn' + (st === 'available' ? ' primary' : '') + '" data-ust="' + st + '">' + (st === 'available' ? 'ตรวจผ่าน → พร้อมใช้' : 'เปลี่ยนเป็น ' + UNIT_ST[st]) + '</button>'; }).join('') +
+        '<button class="btn" data-uprint1>พิมพ์ฉลาก</button><button class="btn" data-uitem>ดูรายการ ' + esc(u.stockId) + '</button></div>' +
+        '<h3>ประวัติชิ้นนี้</h3>' + ((r.history || []).length ? '<ul class="timeline">' + r.history.map(function (h) {
+          return '<li><b>' + esc(UNIT_ST[h.from] || (h.from ? h.from : 'สร้าง')) + ' → ' + esc(UNIT_ST[h.to] || h.to) + '</b>' + (h.loanId ? ' · ' + esc(h.loanId) : '') + '<br><span class="muted">' + fmtDT(h.at) + ' · ' + esc(h.actorName || userName(h.actor)) + (h.reason ? ' · ' + esc(h.reason) : '') + (h.note ? ' · ' + esc(h.note) : '') + '</span></li>';
+        }).join('') + '</ul>' + (r.historyTruncated ? '<p class="muted small">แสดง 100 รายการล่าสุด</p>' : '') : '<p class="muted small">ยังไม่มีประวัติ</p>');
+      $('#sheetBody').onclick = function (e) {
+        if (e.target.closest('[data-uprint1]')) { printUnitLabels([u.unitId], x.name || ''); return; }
+        if (e.target.closest('[data-uitem]')) { openStock(u.stockId); return; }
+        var b = e.target.closest('[data-ust]'); if (!b) return;
+        var why = prompt((b.dataset.ust === 'available' ? 'ตรวจผ่าน ' : 'เปลี่ยนสถานะ ') + u.unitId + ' → ' + UNIT_ST[b.dataset.ust] + '\nเหตุผล (จำเป็น)'); if (why === null) return;
+        if (!why.trim()) { toast('ต้องระบุเหตุผล', true); return; }
+        b.disabled = true; var cur = sheetIsCurrent();
+        apiPost('stock_unit_update', { unitId: u.unitId, status: b.dataset.ust, reason: why.trim().slice(0, 200) }).then(function () { if (cur()) { toast('บันทึกแล้ว · ' + u.unitId); openUnit(u.unitId); } reload().catch(function () {}); })
+          .catch(function (er) { if (cur()) { toast(errText(er), true); b.disabled = false; } });
+      };
+    }).catch(function (r) { if (mg === S.modal) { $('#sheetBody').innerHTML = '<p class="form-error">' + esc(errText(r)) + '</p>'; } });
   }
 
   /* ---------- photos (contract §14) ---------- */
@@ -1150,52 +1227,59 @@
 
   /* ---------- asset create / edit ---------- */
   $('#btnAddAsset').addEventListener('click', function () { openAssetForm(null); });
-  function openAssetForm(a, photos) {
-    var edit = !!a; a = a || {};
+  // v0.14 §24.1: SKU is issued by the server ({CAT}-{NNN}) and never typed or changed. `like` = add more pieces of an
+  // existing model (sameAs): name/model/category/SKU come from that piece; division/location default to it.
+  function openAssetForm(a, photos, like) {
+    var edit = !!a; a = a || {}; var same = !edit && !!like;
     var statusOpts = edit && !a.currentLoanId ? ['available', 'inspection', 'maintenance', 'lost', 'retired'] : [];
-    openSheet(edit ? 'แก้ไข ' + a.assetId : 'เพิ่มอุปกรณ์',
-      (edit ? '' : kindSwitch('asset')) +
+    openSheet(edit ? 'แก้ไข ' + a.assetId : same ? 'เพิ่มชิ้นของรุ่น ' + like.sku : 'เพิ่มอุปกรณ์',
+      (edit || same ? '' : kindSwitch('asset')) +
       '<form id="assetForm" class="tab">' +
-      (edit ? '' : '<div class="row"><label>หมวด *<select name="category" required>' + cats().filter(function (c) { return c.active; }).map(function (c) { return '<option value="' + esc(c.code) + '">' + esc(c.code + ' · ' + c.name) + '</option>'; }).join('') + '</select></label>' +
+      (same ? '<p class="muted small">รุ่นเดิม: <b>' + esc(like.name) + '</b>' + (like.model ? ' · ' + esc(like.model) : '') + ' · SKU <b>' + esc(like.sku) + '</b> · หมวด ' + esc(catName(like.category)) + '</p>' +
+        '<label>จำนวนชิ้นที่เพิ่ม<input type="number" name="qty" min="1" max="50" value="1"></label>' : '') +
+      (edit || same ? '' : '<div class="row"><label>หมวด *<select name="category" required>' + cats().filter(function (c) { return c.active; }).map(function (c) { return '<option value="' + esc(c.code) + '">' + esc(c.code + ' · ' + c.name) + '</option>'; }).join('') + '</select></label>' +
         '<label>จำนวนชิ้น<input type="number" name="qty" min="1" max="50" value="1"></label></div>') +
-      '<label>ฝ่าย *<select name="division" required>' + DIVISIONS.map(function (d) { return '<option value="' + d[0] + '"' + (d[0] === (edit ? divOf(a) : (S.divFilter || 'production')) ? ' selected' : '') + '>' + d[1] + '</option>'; }).join('') + '</select></label>' +
-      '<label>ชื่ออุปกรณ์ *<input name="name" required maxlength="120" value="' + esc(a.name) + '"></label>' +
-      '<div class="row"><label>SKU (รหัสรุ่น) *<input name="sku" required pattern="[A-Z0-9\\-]{2,24}" placeholder="เช่น MEA-LDM50" value="' + esc(a.sku) + '"></label>' +
-      '<label>รุ่น / ยี่ห้อ<input name="model" maxlength="120" value="' + esc(a.model) + '"></label></div>' +
+      '<label>ฝ่าย *<select name="division" required>' + DIVISIONS.map(function (d) { return '<option value="' + d[0] + '"' + (d[0] === (edit ? divOf(a) : same ? divOf(like) : (S.divFilter || 'production')) ? ' selected' : '') + '>' + d[1] + '</option>'; }).join('') + '</select></label>' +
+      (same ? '' : '<label>ชื่ออุปกรณ์ *<input name="name" required maxlength="120" value="' + esc(a.name) + '"></label>' +
+      '<div class="row">' + (edit ? '<label>SKU (รหัสรุ่น)<input value="' + esc(a.sku) + '" disabled></label>' : '<p class="muted small sku-auto">SKU ระบบออกให้อัตโนมัติ (หมวด + เลขรัน)</p>') +
+      '<label>รุ่น / ยี่ห้อ<input name="model" maxlength="120" value="' + esc(a.model) + '"></label></div>') +
       '<div class="row"><label>Serial<input name="serial" maxlength="80" value="' + esc(a.serial) + '"></label>' +
-      '<label>ที่จัดเก็บ<input name="location" maxlength="80" value="' + esc(a.location) + '"></label></div>' +
+      '<label>ที่จัดเก็บ<input name="location" maxlength="80" value="' + esc(same ? like.location : a.location) + '"></label></div>' +
       (statusOpts.length ? '<label>สถานะ<select name="status">' + statusOpts.map(function (s) { return '<option value="' + s + '"' + (s === a.status ? ' selected' : '') + '>' + ASSET_STATUS[s] + '</option>'; }).join('') + '</select></label>' : '') +
       '<label>หมายเหตุ<textarea name="notes" rows="2" maxlength="500">' + esc(a.notes) + '</textarea></label>' +
       '<div class="field"><span class="pin-label">รูปอุปกรณ์ * (สภาพตั้งต้น)</span><div id="assetPhotos"></div></div>' +
       (edit ? '' : '<p class="muted small">จำนวนหลายชิ้น = รุ่นเดียวกัน SKU เดียวกัน ระบบออกรหัส + QR แยกให้ทีละชิ้น (Serial ใส่ทีหลังได้)</p>') +
       '<button class="btn primary block" type="submit">' + (edit ? 'บันทึก' : 'เพิ่ม') + '</button></form>');
-    bindKindSwitch();
+    if (!edit && !same) bindKindSwitch();
     var f = $('#assetForm'), submit = f.querySelector('[type=submit]');
     // Pre-v0.6 assets without photos may be edited without adding one (photoIds omitted = keep, §14.5 S3-1).
     var legacy = edit && !(photos || []).length;
     var pick = photoPicker($('#assetPhotos'), 'asset', { min: legacy ? 0 : 1, max: 5, existing: photos || [] });
     pick.onchange = function () { submit.disabled = !pick.ok(); }; pick.onchange();
-    f.sku.addEventListener('input', function () { f.sku.value = f.sku.value.toUpperCase(); });
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var btn = submit; if (!pick.ok()) { toast('ต้องมีรูปอุปกรณ์อย่างน้อย 1 รูป', true); return; } btn.disabled = true;
       var gen = S.gen, mg = S.modal, stop = {}; function alive() { return gen === S.gen && mg === S.modal; }
-      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, photoIds: pick.ids() };
+      var body = same ? { serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, photoIds: pick.ids() }
+        : { name: f.name.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, photoIds: pick.ids() };
       var p;
       if (edit && !body.photoIds.length) delete body.photoIds; // legacy asset with no photos: keep as-is
       if (edit) { body.assetId = a.assetId; if (f.status && f.status.value !== a.status) body.status = f.status.value; p = apiPost('asset_update', body); }
       else {
-        body.category = f.category.value; var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
+        if (same) body.sameAs = like.assetId; else body.category = f.category.value;
+        var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
         p = (function next(i) {
           if (i >= n) return Promise.resolve();
           if (!alive()) return Promise.reject(stop); // never start uploads/creates for an old session or closed form
           // A photo belongs to one asset (§14.2) → for extra pieces of the same model, upload the same shots again.
           var ids = i === 0 ? Promise.resolve(body.photoIds) : Promise.all(pick.shrunk().map(function (s) { return uploadShrunk('asset', s).then(function (p) { return p.photoId; }); }));
-          return ids.then(function (photoIds) { if (!alive()) throw stop; return apiPost('asset_create', Object.assign({}, body, { serial: i === 0 ? body.serial : '', photoIds: photoIds })); })
+          // piece 1 gets the new auto SKU; pieces 2…N reference piece 1 (sameAs) so they share it (§24.1)
+          var piece = i === 0 || same ? body : { sameAs: made[0], serial: '', location: body.location, notes: body.notes, division: body.division };
+          return ids.then(function (photoIds) { if (!alive()) throw stop; return apiPost('asset_create', Object.assign({}, piece, { serial: i === 0 ? body.serial : '', photoIds: photoIds })); })
             .then(function (r) { made.push(r.asset.assetId); return next(i + 1); });
         })(0).then(function () { if (alive()) toast('เพิ่มแล้ว ' + made.join(', ')); });
       }
       p.then(function () { if (!alive()) return; if (edit) toast('บันทึกแล้ว'); closeSheet(); return reload(); })
-        .catch(function (r) { if (r === stop || !alive()) return; toast(errText(r), true); reload(); }).finally(function () { if (alive()) btn.disabled = !pick.ok(); });
+        .catch(function (r) { if (r === stop || !alive()) return; toast((!edit && made.length ? 'สร้างได้ ' + made.length + ' ชิ้น (' + made.join(', ') + ') แล้วติดปัญหา: ' : '') + errText(r), true); reload(); }).finally(function () { if (alive()) btn.disabled = !pick.ok(); });
     });
   }
 
@@ -1235,8 +1319,10 @@
   function loanHasLost(l) { return (l.items || []).some(function (i) { return i.itemStatus === 'lost'; }) || (l.stockLines || []).some(function (x) { return x.qtyLost > 0; }); }
   // Consumable lines close at checkout, so ReturnedAt is their closure time even if every leftover comes back later
   // (leftover dates live in StockMoves) — such loans never read as a physical "คืนครบ" (GPT r2 S3-2).
-  function loanFullyReturned(l) { return !loanHasLost(l) && (l.stockLines || []).every(function (x) { return x.lineStatus === 'cancelled' || (x.kind === 'counted' && x.qtyIssued > 0 && x.qtyReturned === x.qtyIssued); }); }
-  function closedText(l) { return loanHasLost(l) ? 'ปิดใบ (มีของสูญหาย)' : loanFullyReturned(l) ? 'คืนครบ' : 'ปิดใบ'; }
+  // v0.14 §24.8b: a damaged handback is history ("คืนชำรุด"), not "pending inspection"; assets follow the same rule
+  function loanHasDamaged(l) { return (l.items || []).some(function (i) { return i.itemStatus === 'returned' && i.damaged; }) || (l.stockLines || []).some(function (x) { return x.qtyDamaged > 0; }); }
+  function loanFullyReturned(l) { return !loanHasLost(l) && !loanHasDamaged(l) && (l.stockLines || []).every(function (x) { return x.lineStatus === 'cancelled' || (x.kind === 'counted' && x.qtyIssued > 0 && x.qtyReturned === x.qtyIssued); }); }
+  function closedText(l) { return loanHasLost(l) ? 'ปิดใบ (มีของสูญหาย)' : loanHasDamaged(l) ? 'ปิดใบ (มีของคืนชำรุด)' : loanFullyReturned(l) ? 'คืนครบ' : 'ปิดใบ'; }
   function loanStatusText(l) { return l.status === 'returned' ? closedText(l) : (LOAN_STATUS[l.status] || l.status); }
   function loanPillClass(l) { return l.status === 'returned' && loanHasLost(l) ? 'lost' : l.status; }
   function loanOverdue(l) { return (l.status === 'checked_out' || l.status === 'partially_returned') && l.dueDate < today(); }
@@ -1274,7 +1360,9 @@
       else if (x.lineStatus === 'issued') st = pill(od ? 'overdue' : 'checked_out', 'ค้าง ' + out + u);
       else st = pill('returned', x.kind === 'consumable' ? 'ใช้ ' + x.qtyUsed + u : 'ปิดแล้ว');
       var nums = x.lineStatus === 'requested' || x.lineStatus === 'cancelled' ? 'ขอ ' + x.qtyRequested + u
-        : 'ขอ ' + x.qtyRequested + ' / จ่าย ' + x.qtyIssued + u + (x.qtyReturned ? ' · คืน ' + x.qtyReturned : '') + (x.kind === 'counted' && x.qtyUsed ? ' · ใช้หมด ' + x.qtyUsed : '') + (x.qtyLost ? ' · หาย ' + x.qtyLost : '');
+        : 'ขอ ' + x.qtyRequested + ' / จ่าย ' + x.qtyIssued + u + (x.qtyReturned ? ' · คืน ' + x.qtyReturned : '') + (x.qtyDamaged ? ' (ชำรุด ' + x.qtyDamaged + ')' : '') + (x.kind === 'counted' && x.qtyUsed ? ' · ใช้หมด ' + x.qtyUsed : '') + (x.qtyLost ? ' · หาย ' + x.qtyLost : '');
+      var outIds = (x.units || []).filter(function (z) { return z.outcome === 'out'; }).map(function (z) { return z.unitId; });
+      if (outIds.length) nums += '<br>ค้าง: ' + outIds.map(esc).join(', ');
       var left = x.kind === 'consumable' && x.lineStatus === 'closed' && x.qtyUsed > 0 && x.leftoverUntil && Date.parse(x.leftoverUntil) > Date.now() && P().loanIssue
         ? ' <button class="btn ghost sm" data-left="' + esc(x.stockId) + '" data-id="' + esc(l.loanId) + '">คืนส่วนเหลือ</button>' : '';
       return '<li><span><b>' + esc(x.stockId) + '</b> ' + esc(x.name) + '<br><span class="muted small">' + nums + '</span>' + left + '</span>' + st + '</li>';
@@ -1332,16 +1420,50 @@
       (l.items || []).map(function (i) { return '<li><span><b>' + esc(i.assetId) + '</b> ' + esc(i.assetName) + '</span>' + pill('available', '1 ชิ้น') + '</li>'; }).join('') +
       lines.map(function (x) {
         var sx = stockById(x.stockId), have = sx ? sx.onHand : x.qtyRequested;
+        // counted (§24.4): pick the actual pieces — scan or tick; consumable: a quantity
+        if (x.kind === 'counted') return '<li class="unit-issue" data-sid="' + esc(x.stockId) + '" data-req="' + x.qtyRequested + '"><div><b>' + esc(x.stockId) + '</b> ' + esc(x.name) +
+          ' <span class="muted small">(ขอ ' + x.qtyRequested + ' ' + esc(x.unit) + ' · เลือกแล้ว <b class="u-count">0</b>)</span></div>' +
+          '<div class="row"><input class="u-scan" placeholder="สแกน / พิมพ์รหัสชิ้น แล้วกด Enter" autocapitalize="characters"><button type="button" class="btn sm" data-uauto>เลือกให้อัตโนมัติ</button></div>' +
+          '<div class="u-list"><p class="muted small">กำลังโหลดชิ้นที่พร้อมใช้…</p></div></li>';
         return '<li class="qty-line"><span><b>' + esc(x.stockId) + '</b> ' + esc(x.name) + ' <span class="muted small">(ขอ ' + x.qtyRequested + ' · คลังมี ' + have + ' ' + esc(x.unit) + ')</span></span>' +
           '<span class="qty"><input type="number" inputmode="numeric" min="0" max="' + x.qtyRequested + '" step="1" value="' + Math.min(x.qtyRequested, Math.max(0, have)) + '" data-iq="' + esc(x.stockId) + '"> ' + esc(x.unit) + '</span></li>';
       }).join('') + '</ul><button class="btn primary block" type="submit">ยืนยันจ่ายของ</button></form>');
-    $('#coForm').addEventListener('submit', function (e) {
+    var coForm = $('#coForm'), coBtn = coForm.querySelector('[type=submit]'), pending = 0, mgCo = S.modal;
+    function uCount(li) { var n = $$('[data-uid]', li).filter(function (c) { return c.checked; }).length; li.querySelector('.u-count').textContent = n; return n; }
+    $$('.unit-issue', coForm).forEach(function (li) {
+      pending++; coBtn.disabled = true;
+      loadAllUnits(li.dataset.sid, 'available').then(function (units) {
+        if (mgCo !== S.modal) return;
+        li.querySelector('.u-list').innerHTML = units.length ? units.map(function (u) { return '<label class="u-row"><input type="checkbox" class="check" data-uid="' + esc(u.unitId) + '"> ' + esc(u.unitId) + '</label>'; }).join('') : '<p class="muted small">ไม่มีชิ้นที่พร้อมใช้</p>';
+        if (!--pending) coBtn.disabled = false;
+      }).catch(function (r) { if (mgCo === S.modal) li.querySelector('.u-list').innerHTML = '<p class="form-error">' + esc(errText(r)) + '</p>'; });
+    });
+    coForm.addEventListener('change', function (e) {
+      var cb = e.target.closest('[data-uid]'); if (!cb) return; var li = cb.closest('.unit-issue');
+      if (uCount(li) > +li.dataset.req) { cb.checked = false; uCount(li); toast('เลือกได้ไม่เกินจำนวนที่ขอ (' + li.dataset.req + ')', true); }
+    });
+    coForm.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-uauto]'); if (!b) return; var li = b.closest('.unit-issue'), need = +li.dataset.req - uCount(li);
+      $$('[data-uid]', li).forEach(function (c) { if (need > 0 && !c.checked) { c.checked = true; need--; } }); uCount(li);
+    });
+    coForm.addEventListener('keydown', function (e) {
+      var inp = e.target.closest('.u-scan'); if (!inp || e.key !== 'Enter') return; e.preventDefault();
+      var li = inp.closest('.unit-issue'), v = parseScan(inp.value), cb = $$('[data-uid]', li).find(function (c) { return c.dataset.uid === v; });
+      if (!cb) toast('ไม่พบ ' + v + ' ในชิ้นที่พร้อมใช้ของรายการนี้', true);
+      else if (cb.checked) toast(v + ' เลือกไว้แล้ว');
+      else if (uCount(li) >= +li.dataset.req) toast('ครบจำนวนที่ขอแล้ว', true);
+      else { cb.checked = true; uCount(li); }
+      inp.value = '';
+    });
+    coForm.addEventListener('submit', function (e) {
       e.preventDefault(); var btn = e.target.querySelector('[type=submit]');
+      if (pending) { toast('รอโหลดรายชิ้นให้ครบก่อน', true); return; }
       var issue = $$('[data-iq]', e.target).map(function (q) { return { stockId: q.dataset.iq, qty: Number(q.value), max: +q.max }; });
+      var picks = $$('.unit-issue', e.target).map(function (li) { return { stockId: li.dataset.sid, unitIds: $$('[data-uid]', li).filter(function (c) { return c.checked; }).map(function (c) { return c.dataset.uid; }) }; });
       if (issue.some(function (i) { return !(i.qty >= 0 && i.qty <= i.max && Math.floor(i.qty) === i.qty); })) { toast('จำนวนจ่ายต้องเป็นจำนวนเต็ม 0 ถึงจำนวนที่ขอ', true); return; }
       btn.disabled = true;
       var cur = sheetIsCurrent();
-      apiPost('loan_checkout', { loanId: l.loanId, stockIssue: issue.map(function (i) { return { stockId: i.stockId, qty: i.qty }; }) })
+      apiPost('loan_checkout', { loanId: l.loanId, stockIssue: issue.map(function (i) { return { stockId: i.stockId, qty: i.qty }; }).concat(picks) })
         .then(function () { if (cur()) { toast('จ่ายของแล้ว · ' + l.loanId); closeSheet(); } return reload(); })
         .catch(function (r) { if (cur()) { toast(errText(r), true); btn.disabled = false; } reload(); });
     });
@@ -1357,10 +1479,14 @@
           '<input name="cond" placeholder="สภาพ / หมายเหตุ (ถ้ามี)" maxlength="200">' +
           '<div class="field"><span class="pin-label">รูปสภาพตอนคืน * (ตำหนิ / ชำรุด)</span><div class="ret-photos"></div></div></div>';
       }).join('') + cnt.map(function (x) {
-        var o = x.qtyIssued - x.qtyReturned - x.qtyUsed - x.qtyLost;
-        return '<div class="ret-row stock-ret" data-sid="' + esc(x.stockId) + '" data-out="' + o + '"><div><b>' + esc(x.stockId) + '</b> ' + esc(x.name) + ' <span class="muted small">(ค้าง ' + o + ' ' + esc(x.unit) + ')</span></div>' +
-          '<div class="row qty3"><label>คืน<input type="number" inputmode="numeric" min="0" max="' + o + '" value="' + o + '" name="sRet"></label><label>ใช้หมด<input type="number" inputmode="numeric" min="0" max="' + o + '" value="0" name="sUsed"></label><label>หาย<input type="number" inputmode="numeric" min="0" max="' + o + '" value="0" name="sLost"></label></div>' +
-          '<input name="sReason" placeholder="เหตุผล (บังคับถ้ามีใช้หมด/หาย)" maxlength="200"></div>';
+        // v0.14 §24.4: one row per piece still out on this loan — returned / damaged / lost / used / not yet
+        var outU = (x.units || []).filter(function (u) { return u.outcome === 'out'; });
+        return '<div class="ret-row stock-ret" data-sid="' + esc(x.stockId) + '"><div><b>' + esc(x.stockId) + '</b> ' + esc(x.name) + ' <span class="muted small">(ค้าง ' + outU.length + ' ' + esc(x.unit) + ')</span></div>' +
+          outU.map(function (u) {
+            return '<div class="u-ret" data-uid="' + esc(u.unitId) + '"><span>' + esc(u.unitId) + '</span><select name="uo">' +
+              [['returned', 'คืนปกติ'], ['damaged', 'คืนชำรุด (ส่งตรวจ)'], ['lost', 'หาย'], ['used', 'ใช้หมด / ทิ้ง'], ['', 'ยังไม่คืน']].map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></div>';
+          }).join('') +
+          '<input name="sReason" placeholder="เหตุผล (บังคับถ้ามีชำรุด/หาย/ใช้หมด)" maxlength="200"></div>';
       }).join('') + '<button class="btn primary block" type="submit">ยืนยันรับคืน</button></form>');
     // Every returned item needs ≥1 photo (§14.2); only picked rows count.
     var form = $('#retForm'), submit = form.querySelector('[type=submit]'), pickers = {};
@@ -1370,10 +1496,11 @@
     }
     function stockRet() {
       return $$('.stock-ret', form).map(function (r) {
-        return { stockId: r.dataset.sid, out: +r.dataset.out, returned: Number(r.querySelector('[name=sRet]').value), used: Number(r.querySelector('[name=sUsed]').value), lost: Number(r.querySelector('[name=sLost]').value), reason: r.querySelector('[name=sReason]').value.trim() };
-      }).filter(function (x) { return x.returned + x.used + x.lost > 0; });
+        return { stockId: r.dataset.sid, units: $$('.u-ret', r).map(function (d) { return { unitId: d.dataset.uid, outcome: d.querySelector('[name=uo]').value }; }).filter(function (u) { return u.outcome; }), reason: r.querySelector('[name=sReason]').value.trim() };
+      }).filter(function (x) { return x.units.length; });
     }
     form.addEventListener('input', function (e) { if (e.target.closest('.stock-ret')) refresh(); });
+    form.addEventListener('change', function (e) { if (e.target.closest('.stock-ret')) refresh(); });
     $$('.ret-row:not(.stock-ret)', form).forEach(function (r) { var p = pickers[r.dataset.id] = photoPicker(r.querySelector('.ret-photos'), 'return', { min: 1, max: 3 }); p.onchange = refresh; });
     form.addEventListener('change', function (e) { if (e.target.name === 'pick') { e.target.closest('.ret-row').classList.toggle('off', !e.target.checked); refresh(); } });
     refresh();
@@ -1390,20 +1517,18 @@
         return { assetId: r.dataset.id, conditionIn: cond || (lost ? 'สูญหาย' : dmg ? 'เสียหาย' : 'ปกติ'), damaged: dmg, lost: lost, note: cond, photoIds: pickers[r.dataset.id].ids() };
       });
       var sret = stockRet();
-      var badS = sret.find(function (x) { return [x.returned, x.used, x.lost].some(function (v) { return !(v >= 0 && Math.floor(v) === v); }) || x.returned + x.used + x.lost > x.out; });
-      if (badS) { toast(badS.stockId + ': รวมคืน+ใช้หมด+หาย ต้องเป็นจำนวนเต็มไม่เกินที่ค้าง', true); return; }
-      var noWhy = sret.find(function (x) { return (x.used > 0 || x.lost > 0) && !x.reason; });
-      if (noWhy) { toast(noWhy.stockId + ': ใส่เหตุผลเมื่อมีใช้หมดหรือหาย', true); return; }
+      var noWhy = sret.find(function (x) { return x.units.some(function (u) { return u.outcome !== 'returned'; }) && !x.reason; });
+      if (noWhy) { toast(noWhy.stockId + ': ใส่เหตุผลเมื่อมีชิ้นชำรุด หาย หรือใช้หมด', true); return; }
       if (!items.length && !sret.length) { toast('เลือกอย่างน้อย 1 รายการ', true); return; }
       if (items.some(function (i) { return !i.photoIds.length; }) || items.some(function (i) { return pickers[i.assetId].busy(); })) { toast('ทุกชิ้นที่คืนต้องมีรูปอย่างน้อย 1 รูป (รอให้อัปเสร็จ)', true); return; }
       btn.disabled = true;
       var rb = { loanId: l.loanId };
       if (items.length) rb.items = items;
-      if (sret.length) rb.stockReturn = sret.map(function (x) { var o = { stockId: x.stockId, returned: x.returned, used: x.used, lost: x.lost }; if (x.reason) o.reason = x.reason; return o; });
+      if (sret.length) rb.stockReturn = sret.map(function (x) { var o = { stockId: x.stockId, units: x.units }; if (x.reason) o.reason = x.reason; return o; });
       var cur = sheetIsCurrent();
       apiPost('loan_return', rb).then(function (r) {
         var done = r.loan && r.loan.status === 'returned';
-        if (cur()) { toast(done ? (loanHasLost(r.loan) ? 'ปิดใบแล้ว (มีของสูญหาย) · ' : loanFullyReturned(r.loan) ? 'คืนครบแล้ว · ' : 'ปิดใบแล้ว · ') + l.loanId : 'บันทึกแล้ว ' + (items.length + sret.length) + ' รายการ'); closeSheet(); }
+        if (cur()) { toast(done ? (loanHasLost(r.loan) ? 'ปิดใบแล้ว (มีของสูญหาย) · ' : loanHasDamaged(r.loan) ? 'ปิดใบแล้ว (มีของคืนชำรุด) · ' : loanFullyReturned(r.loan) ? 'คืนครบแล้ว · ' : 'ปิดใบแล้ว · ') + l.loanId : 'บันทึกแล้ว ' + (items.length + sret.length) + ' รายการ'); closeSheet(); }
         return reload();
       }).catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { if (cur()) refresh(); });
     });
@@ -1753,7 +1878,7 @@
     });
   }
   function parseScan(text) {
-    try { var u = new URL(text); var a = u.searchParams.get('a') || u.searchParams.get('s'); if (a) return a.toUpperCase(); } catch (e) {}
+    try { var u = new URL(text); var a = u.searchParams.get('a') || u.searchParams.get('s') || u.searchParams.get('u'); if (a) return a.toUpperCase(); } catch (e) {}
     return String(text).trim().toUpperCase();
   }
   $('#btnScan').addEventListener('click', function () {
@@ -1770,9 +1895,9 @@
   });
   function onScan(text) {
     var id = parseScan(text);
-    var isStock = !!stockById(id);
-    if (!assetById(id) && !isStock) { var m = $('#scanMsg'); if (m) m.textContent = 'ไม่พบรหัส ' + id + ' ในระบบ'; return; }
-    stopScanner().then(function () { if (navigator.vibrate) navigator.vibrate(60); if (isStock) openStock(id); else openAsset(id); });
+    var isStock = !!stockById(id), isUnit = !assetById(id) && !isStock && (S.stock || []).some(function (x) { return x.kind === 'counted' && id.indexOf(x.sku + '-') === 0; });
+    if (!assetById(id) && !isStock && !isUnit) { var m = $('#scanMsg'); if (m) m.textContent = 'ไม่พบรหัส ' + id + ' ในระบบ'; return; }
+    stopScanner().then(function () { if (navigator.vibrate) navigator.vibrate(60); if (isUnit) openUnit(id); else if (isStock) openStock(id); else openAsset(id); });
   }
   function stopScanner() {
     var s = scanner; scanner = null;
