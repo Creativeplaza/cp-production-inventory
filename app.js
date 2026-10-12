@@ -759,14 +759,20 @@
       S.cart = S.cart.filter(function (id) { return sentA.indexOf(id) < 0; });
       sentS.forEach(function (x) { delete S.stockCart[x.stockId]; });
       renderCart(); renderAssets();
-      apiPost('loan_request', body)
-        .then(function (r) { if (cur()) { closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); } return reload(); })
-        .catch(function (r) {
-          sentA.forEach(function (id) { if (S.cart.indexOf(id) < 0 && S.cart.length < 20) S.cart.push(id); });
-          sentS.forEach(function (x) { if (!(x.stockId in S.stockCart)) S.stockCart[x.stockId] = x.qty; });
-          renderCart(); renderAssets();
-          if (cur()) { toast(errText(r), true); btn.disabled = false; } if (r && r.status === 409) reload();
-        });
+      // Success and failure are handled apart: a failed refresh AFTER an acknowledged request must never put its
+      // picks back (that would invite a second loan) — GPT r3 S3-1.
+      apiPost('loan_request', body).then(function (r) {
+        if (cur()) { closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); }
+        reload().catch(function () {});
+      }, function (r) {
+        var lostA = 0, lostS = 0;
+        sentA.forEach(function (id) { if (S.cart.indexOf(id) < 0) { if (S.cart.length < 20) S.cart.push(id); else lostA++; } });
+        sentS.forEach(function (x) { if (!(x.stockId in S.stockCart)) { if (Object.keys(S.stockCart).length < 20) S.stockCart[x.stockId] = x.qty; else lostS++; } });
+        renderCart(); renderAssets();
+        if (cur()) { toast(errText(r) + (lostA + lostS ? ' · ตะกร้าเต็ม ใส่คืนไม่ได้ ' + (lostA + lostS) + ' รายการ' : ''), true); btn.disabled = false; }
+        else if (lostA + lostS) toast('ตะกร้าเต็ม ใส่รายการที่ส่งไม่สำเร็จคืนไม่ได้ ' + (lostA + lostS) + ' รายการ', true);
+        if (r && r.status === 409) reload().catch(function () {});
+      });
     });
   }
 
