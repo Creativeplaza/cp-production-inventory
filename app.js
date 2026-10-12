@@ -15,9 +15,13 @@
   // v0.6: categories come from the server (bundle.categories); the fallback only covers an older backend.
   function cats() { return (S.categories && S.categories.length) ? S.categories : Object.keys(CATEGORIES_FALLBACK).map(function (c) { return { code: c, name: CATEGORIES_FALLBACK[c], active: true }; }); }
   function catName(code) { var c = cats().find(function (x) { return x.code === code; }); return c ? c.name : code; }
+  // v0.12 §22: three fixed storage divisions; a blank value on an older asset means production
+  var DIVISIONS = [['production', 'Production'], ['operation', 'Operation'], ['backoffice', 'BackOffice']];
+  function divOf(a) { return (a && a.division) || 'production'; }
+  function divName(d) { var x = DIVISIONS.find(function (v) { return v[0] === d; }); return x ? x[1] : d; }
   var ROLES = { admin: 'ผู้ดูแลระบบ', approver: 'ผู้อนุมัติ', storekeeper: 'ผู้ดูแลคลัง', requester: 'ผู้เบิก' };
 
-  var S = { gen: 0, dataGen: 0, modal: 0, token: null, me: null, assets: [], loans: [], approvers: [], cart: [], printSel: null, statFilter: '', loanFilter: 'action', report: 'register' };
+  var S = { gen: 0, dataGen: 0, modal: 0, token: null, me: null, assets: [], loans: [], approvers: [], cart: [], printSel: null, statFilter: '', divFilter: '', loanFilter: 'action', report: 'register' };
 
   /* ---------- utils ---------- */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -259,8 +263,8 @@
     if (S.token && !expired) send({ action: 'logout', token: S.token }, true).catch(function () {});
     S.gen++; S.dataGen++; allLoansP = null; $('#btnCsv').disabled = false; // reusable control left disabled by a dropped request
     dropBundle(); $('#syncNote').hidden = true; S.token = null; S.me = null; S.cart = []; S.assets = []; S.loans = []; S.approvers = []; S.printSel = null; allLoans = null; store('cpi_token', null);
-    S.users = []; S.invites = []; S.roles = []; S.people = []; S.deletedUsers = []; closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
-    closeSheet(true); ['#assetList', '#loanList', '#repTable', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
+    S.users = []; S.invites = []; S.roles = []; S.people = []; S.deletedUsers = []; S.divFilter = ''; try { sessionStorage.removeItem('cpi_div'); } catch (x) {} closeDrawer(); closePhoto(); hideHover(); fullCache = {}; fullOrder = []; coverCache = {}; coversUnsupported = false; coverBusy = false; coverAttempt++; coverRetryAt = 0;
+    closeSheet(true); ['#assetList', '#loanList', '#repTable', '#divs', '#stats', '#printArea', '#usersBody', '#sideCard'].forEach(function (sel) { $(sel).innerHTML = ''; });
     if (expired) toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true);
     showLogin();
   }
@@ -305,6 +309,7 @@
   /* ---------- load ---------- */
   function skeleton() {
     var card = '<li class="item skel"><span class="sk sk-box"></span><div class="main"><span class="sk sk-line w60"></span><span class="sk sk-line w35"></span></div><span class="sk sk-pill"></span></li>';
+    $('#divs').innerHTML = new Array(4).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
     $('#stats').innerHTML = new Array(5).join('<div class="stat skel"><span class="sk sk-num"></span><span class="sk sk-line w50"></span></div>');
     $('#assetList').innerHTML = $('#loanList').innerHTML = new Array(7).join(card);
     $('#usersBody').innerHTML = '<ul class="list">' + new Array(5).join(card) + '</ul>';
@@ -447,6 +452,7 @@
   var moveBlob = liquid($('.side-nav'), '.nav-item[aria-selected=true]', 'nav-blob');
   liquid($('#loanFilter'), '.chip[aria-pressed=true]', 'chip-pill');
   $$('.seg').forEach(function (g) { liquid(g, 'button[aria-pressed=true]', 'seg-pill'); });
+  liquid($('#divs'), '.stat[aria-pressed=true]', 'stat-pill');
   liquid($('#stats'), '.stat[aria-pressed=true]', 'stat-pill'); // flowing gradient behind the status card you filter by
   // FLIP: when a list re-renders (filter / data change), cards that stay glide from their old spot to the new one
   // and new cards melt in, instead of the list jumping. Keyed by an attribute; skipped for long lists.
@@ -495,19 +501,34 @@
 
   /* ---------- assets tab ---------- */
   function isOverdueAsset(a) { return a.status === 'checked_out' && a.dueDate && a.dueDate < today(); }
+  function inDiv(a) { return !S.divFilter || divOf(a) === S.divFilter; }
+  function renderDivs() {
+    var n = {}; S.assets.forEach(function (a) { if (a.status !== 'retired') n[divOf(a)] = (n[divOf(a)] || 0) + 1; });
+    $('#divs').innerHTML = DIVISIONS.map(function (d) {
+      return '<button class="stat div" data-d="' + d[0] + '" aria-pressed="' + (S.divFilter === d[0]) + '"><b>' + (n[d[0]] || 0) + '</b><span>' + d[1] + '</span></button>';
+    }).join('');
+  }
   function renderStats() {
+    renderDivs();
     var c = { available: 0, out: 0, pending: 0, overdue: 0 };
-    S.assets.forEach(function (a) {
+    S.assets.filter(inDiv).forEach(function (a) {
       if (a.status === 'available') c.available++;
       if (a.status === 'checked_out') c.out++;
       if (isOverdueAsset(a)) c.overdue++;
     });
-    c.pending = S.loans.filter(function (l) { return l.status === 'pending'; }).length;
+    c.pending = S.loans.filter(function (l) { return l.status === 'pending' && (!S.divFilter || (l.items || []).some(function (i) { return inDiv(assetById(i.assetId) || {}); })); }).length;
     var defs = [['available', 'ว่าง', c.available], ['checked_out', 'ถูกเบิก', c.out], ['reserved', 'จอง / รออนุมัติ', c.pending], ['overdue', 'ค้างคืน', c.overdue]];
     $('#stats').innerHTML = defs.map(function (d) {
       return '<button class="stat' + (d[0] === 'overdue' && d[2] ? ' bad' : '') + '" data-s="' + d[0] + '" aria-pressed="' + (S.statFilter === d[0]) + '"><b>' + d[2] + '</b><span>' + d[1] + '</span></button>';
     }).join('');
   }
+  $('#divs').addEventListener('click', function (e) {
+    var b = e.target.closest('.stat'); if (!b) return;
+    S.divFilter = S.divFilter === b.dataset.d ? '' : b.dataset.d;
+    try { sessionStorage.setItem('cpi_div', S.divFilter); } catch (x) {}
+    renderStats(); renderAssets();
+  });
+  try { var d0 = sessionStorage.getItem('cpi_div'); if (DIVISIONS.some(function (d) { return d[0] === d0; })) S.divFilter = d0; } catch (x) {}
   $('#stats').addEventListener('click', function (e) {
     var b = e.target.closest('.stat'); if (!b) return;
     S.statFilter = S.statFilter === b.dataset.s ? '' : b.dataset.s; $('#fStatus').value = '';
@@ -520,6 +541,7 @@
     var showRetired = st === 'retired' || sf === 'retired';
     return S.assets.filter(function (a) {
       if (a.status === 'retired' && !showRetired) return false; // §17.1 hidden = retired
+      if (!inDiv(a)) return false;
       if (cat && a.category !== cat) return false;
       if (st && a.status !== st) return false;
       if (sf === 'overdue' && !isOverdueAsset(a)) return false;
@@ -599,7 +621,7 @@
   function paintHover() {
     var a = assetById(hoverAsset), hc = $('#hoverCard'); if (!a) { hideHover(); return; }
     var od = isOverdueAsset(a), t = coverCache[coverKey(a)];
-    var rows = [['SKU', a.sku], ['หมวด', catName(a.category)], ['รุ่น', a.model], ['Serial', a.serial], ['ที่เก็บ', a.location]];
+    var rows = [['SKU', a.sku], ['ฝ่าย', divName(divOf(a))], ['หมวด', catName(a.category)], ['รุ่น', a.model], ['Serial', a.serial], ['ที่เก็บ', a.location]];
     if (a.holder) rows.push(['ผู้ถือ', userName(a.holder) + (contactOf(a.holder) ? ' · ' + contactOf(a.holder) : '')], ['Project', a.project], ['กำหนดคืน', fmtDate(a.dueDate) + (od ? ' (เกิน ' + daysLate(a.dueDate) + ' วัน)' : '')]);
     if (a.notes) rows.push(['หมายเหตุ', a.notes]);
     hc.innerHTML = (hasPhotos(a) ? '<div class="hc-img' + (t ? '' : ' loading') + '">' + (t ? '<img alt="" src="' + esc(t) + '">' : '') + '</div>' : '<div class="hc-img none">ไม่มีรูป</div>') +
@@ -711,7 +733,7 @@
         '<div class="qr-box">' + qrSvg(assetUrl(a.assetId)) + '<div>' + (od ? pill('overdue', 'ค้างคืน ' + daysLate(a.dueDate) + ' วัน') : pill(a.status, ASSET_STATUS[a.status])) +
         '<p class="muted small">' + esc(a.sku) + '</p></div></div>' +
         '<dl class="kv"><dt>รุ่น</dt><dd>' + esc(a.model || '–') + '</dd><dt>Serial</dt><dd>' + esc(a.serial || '–') + '</dd>' +
-        '<dt>หมวด</dt><dd>' + esc(catName(a.category)) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
+        '<dt>ฝ่าย</dt><dd>' + esc(divName(divOf(a))) + '</dd><dt>หมวด</dt><dd>' + esc(catName(a.category)) + '</dd><dt>ที่เก็บ</dt><dd>' + esc(a.location || '–') + '</dd>' +
         (a.holder ? '<dt>ผู้ถือ</dt><dd>' + esc(userName(a.holder)) + (contactOf(a.holder) ? '<br><span class="contact">' + esc(contactOf(a.holder)) + '</span>' : '') + '</dd><dt>Project</dt><dd>' + esc(a.project) + '</dd><dt>กำหนดคืน</dt><dd>' + fmtDate(a.dueDate) + '</dd>' : '') +
         (a.notes ? '<dt>หมายเหตุ</dt><dd>' + esc(a.notes) + '</dd>' : '') + '</dl>' +
         '<div class="row">' + act.join('') + '</div><h3>ประวัติการเบิก (ล่าสุด)</h3>' + hist;
@@ -939,6 +961,7 @@
       '<form id="assetForm" class="tab">' +
       (edit ? '' : '<div class="row"><label>หมวด *<select name="category" required>' + cats().filter(function (c) { return c.active; }).map(function (c) { return '<option value="' + esc(c.code) + '">' + esc(c.code + ' · ' + c.name) + '</option>'; }).join('') + '</select></label>' +
         '<label>จำนวนชิ้น<input type="number" name="qty" min="1" max="50" value="1"></label></div>') +
+      '<label>ฝ่าย *<select name="division" required>' + DIVISIONS.map(function (d) { return '<option value="' + d[0] + '"' + (d[0] === (edit ? divOf(a) : (S.divFilter || 'production')) ? ' selected' : '') + '>' + d[1] + '</option>'; }).join('') + '</select></label>' +
       '<label>ชื่ออุปกรณ์ *<input name="name" required maxlength="120" value="' + esc(a.name) + '"></label>' +
       '<div class="row"><label>SKU (รหัสรุ่น) *<input name="sku" required pattern="[A-Z0-9-]{2,24}" placeholder="เช่น MEA-LDM50" value="' + esc(a.sku) + '"></label>' +
       '<label>รุ่น / ยี่ห้อ<input name="model" maxlength="120" value="' + esc(a.model) + '"></label></div>' +
@@ -958,9 +981,10 @@
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var btn = submit; if (!pick.ok()) { toast('ต้องมีรูปอุปกรณ์อย่างน้อย 1 รูป', true); return; } btn.disabled = true;
       var gen = S.gen, mg = S.modal, stop = {}; function alive() { return gen === S.gen && mg === S.modal; }
-      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), photoIds: pick.ids() };
+      var body = { name: f.name.value.trim(), sku: f.sku.value.trim(), model: f.model.value.trim(), serial: f.serial.value.trim(), location: f.location.value.trim(), notes: f.notes.value.trim(), division: f.division.value, photoIds: pick.ids() };
       var p;
       if (edit && !body.photoIds.length) delete body.photoIds; // legacy asset with no photos: keep as-is
+      if (edit && body.division === divOf(a) && !a.division) delete body.division; // blank legacy row: keep it untouched unless changed
       if (edit) { body.assetId = a.assetId; if (f.status && f.status.value !== a.status) body.status = f.status.value; p = apiPost('asset_update', body); }
       else {
         body.category = f.category.value; var n = Math.max(1, Math.min(50, +f.qty.value || 1)), made = [];
@@ -1145,9 +1169,9 @@
     var f = { from: $('#rFrom').value, to: $('#rTo').value, project: $('#rProject').value.trim().toLowerCase(), holder: $('#rHolder').value, sku: $('#rSku').value.trim().toUpperCase(), status: $('#rStatus').value };
     var t = S.report;
     if (t === 'register') {
-      return { head: ['รหัสทรัพย์สิน', 'SKU', 'ชื่อ', 'หมวด', 'รุ่น', 'Serial', 'ที่จัดเก็บ', 'สถานะ', 'ผู้ถือ', 'Project', 'กำหนดคืน'],
+      return { head: ['รหัสทรัพย์สิน', 'SKU', 'ชื่อ', 'ฝ่าย', 'หมวด', 'รุ่น', 'Serial', 'ที่จัดเก็บ', 'สถานะ', 'ผู้ถือ', 'Project', 'กำหนดคืน'],
         rows: S.assets.filter(function (a) { return (!f.sku || a.sku.indexOf(f.sku) >= 0) && (!f.status || a.status === f.status); }).map(function (a) {
-          return [a.assetId, a.sku, a.name, a.category, a.model, a.serial, a.location, ASSET_STATUS[a.status] || a.status, a.holder ? userName(a.holder) : '', a.project, a.dueDate];
+          return [a.assetId, a.sku, a.name, divName(divOf(a)), a.category, a.model, a.serial, a.location, ASSET_STATUS[a.status] || a.status, a.holder ? userName(a.holder) : '', a.project, a.dueDate];
         }) };
     }
     var rows = [];

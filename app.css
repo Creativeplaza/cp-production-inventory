@@ -473,3 +473,7 @@ tbody tr:last-child td{border-bottom:0}
   #catList .item .main{flex:1 1 100%}
   #catList .item .side{flex:1 1 100%;flex-direction:row;align-items:center;justify-content:space-between}
 }
+
+/* v0.12 division cards: a row of three above the status cards */
+.stats.divs{grid-template-columns:repeat(3,1fr);margin-bottom:10px}
+@media (max-width:520px){.stats.divs{grid-template-columns:repeat(3,1fr);gap:8px}.stats.divs .stat{padding:12px 10px 10px}}

@@ -61,6 +61,9 @@
   function profileOf(db, u) { return { username: u.username, name: u.name, phone: u.phone || '', department: u.department || '', avatarThumb: avatarOf(db, u) }; }
   function nameOf(db, un) { var u = db.users.find(function (x) { return x.username === un; }) || (db.deletedUsers || []).find(function (x) { return x.username === un; }); return u ? u.name : un; }
   function takenName(db, un) { return db.users.some(function (x) { return x.username === un; }) || (db.deletedUsers || []).some(function (x) { return x.username === un; }); }
+  // v0.12 §22: blank Division (older rows) reads as production
+  var DIVS = ['production', 'operation', 'backoffice'];
+  function divOut(a) { return Object.assign({}, a, { division: a.division || 'production' }); }
   function assetBy(db, id) { return db.assets.find(function (x) { return x.assetId === id; }); }
   function loanOut(db, l) {
     var o = JSON.parse(JSON.stringify(l));
@@ -92,7 +95,7 @@
     var db = load(); var u = sessUser(db, p.token);
     if (!u) return err(401, 'Unauthorized');
     if (api === 'me') return { success: true, user: { username: u.username, name: u.name, role: u.role }, perms: perms(u) };
-    if (api === 'bundle') return { success: true, assets: db.assets.map(function (a) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; }); return Object.assign({}, a, { photoCount: ph.length, coverPhotoId: ph.length ? ph[0].photoId : '' }); }), loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
+    if (api === 'bundle') return { success: true, assets: db.assets.map(function (a) { var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; }); return Object.assign(divOut(a), { photoCount: ph.length, coverPhotoId: ph.length ? ph[0].photoId : '' }); }), loans: db.loans.slice().reverse().map(function (l) { return loanOut(db, l); }), loansTruncated: false,
       approvers: approvers(db), categories: db.categories, roles: db.roles.map(function (r) { return { roleId: r.roleId, name: r.name }; }),
       deletedUsers: (db.deletedUsers || []).map(function (x) { return { username: x.username, name: x.name }; }),
       people: db.users.filter(function (x) { return x.active; }).map(function (x) { return profileOf(db, x); }),
@@ -101,7 +104,7 @@
       var a = assetBy(db, p.id); if (!a) return err(404, 'NOT_FOUND');
       var ph = db.photos.filter(function (x) { return x.status === 'attached' && x.kind === 'asset' && x.assetId === a.assetId; }).sort(function (x, y) { return x.position - y.position; })
         .map(function (x) { return { photoId: x.photoId, thumb: x.thumb, width: x.width, height: x.height, uploadedAt: x.uploadedAt }; });
-      return { success: true, item: a, photos: ph,
+      return { success: true, item: divOut(a), photos: ph,
         loans: db.loans.filter(function (l) { return l.items.some(function (i) { return i.assetId === a.assetId; }); }).reverse().map(function (l) { return loanOut(db, l); }),
         events: db.events.filter(function (e) { return e.assetId === a.assetId; }).reverse().slice(0, 100) };
     }
@@ -234,6 +237,7 @@
       case 'asset_create': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
         if (!db.categories.some(function (x) { return x.code === b.category && x.active; })) return err(400, 'หมวดนี้ปิดใช้หรือไม่มีอยู่');
+        if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
         var pe = photoSet(b.photoIds, 'asset', 1, 5, null); if (pe) return err(400, pe === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID');
         if (!/^[A-Z]{2,4}$/.test(b.category || '')) return err(400, 'หมวดไม่ถูกต้อง');
         if (!/^[A-Z0-9-]{2,24}$/.test(b.sku || '')) return err(400, 'SKU ไม่ถูกต้อง');
@@ -242,20 +246,21 @@
         var n = db.assets.concat(db.deletedAssets || []).reduce(function (m, x) { var k = x.assetId.split('-'); return k[0] === b.category ? Math.max(m, +k[1] || 0) : m; }, 0) + 1;
         var id = b.category + '-' + String(n).padStart(4, '0');
         var na = { assetId: id, sku: b.sku, name: b.name, category: b.category, model: b.model || '', serial: b.serial || '', location: b.location || '',
-          status: 'available', currentLoanId: '', holder: '', project: '', dueDate: '', notes: b.notes || '', createdAt: now, updatedAt: now };
-        db.assets.push(na); attach(b.photoIds, 'asset', id); ev(db, u.username, 'asset_create', '', id, '', 'available', '', rid); save(db); return { success: true, asset: na };
+          status: 'available', currentLoanId: '', holder: '', project: '', dueDate: '', notes: b.notes || '', division: b.division || 'production', createdAt: now, updatedAt: now };
+        db.assets.push(na); attach(b.photoIds, 'asset', id); ev(db, u.username, 'asset_create', '', id, '', 'available', '', rid); save(db); return { success: true, asset: divOut(na) };
       }
       case 'asset_update': {
         if (!P.assetManage) return err(403, 'FORBIDDEN');
         var ua = assetBy(db, b.assetId); if (!ua) return err(404, 'NOT_FOUND');
         if (b.photoIds !== undefined) { var pu = photoSet(b.photoIds, 'asset', 1, 5, ua.assetId); if (pu) return err(400, pu === 'PHOTO_COUNT' ? 'ต้องมีรูป 1–5 รูป' : 'PHOTO_INVALID'); attach(b.photoIds, 'asset', ua.assetId); }
-        ['sku', 'name', 'model', 'serial', 'location', 'notes'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
+        if (b.division !== undefined && DIVS.indexOf(b.division) < 0) return err(400, 'VALIDATION');
+        ['sku', 'name', 'model', 'serial', 'location', 'notes', 'division'].forEach(function (k) { if (b[k] !== undefined) ua[k] = b[k]; });
         if (b.status && b.status !== ua.status) {
           if (ua.currentLoanId) return err(409, 'BAD_TRANSITION');
           if (['available', 'inspection', 'maintenance', 'lost', 'retired'].indexOf(b.status) < 0) return err(409, 'BAD_TRANSITION');
           setAsset(db, ua.assetId, b.status, null, u.username, 'asset_update', rid);
         } else ev(db, u.username, 'asset_update', '', ua.assetId, ua.status, ua.status, '', rid);
-        ua.updatedAt = now; save(db); return { success: true, asset: ua };
+        ua.updatedAt = now; save(db); return { success: true, asset: divOut(ua) };
       }
       case 'loan_request': {
         if (!P.loanRequest) return err(403, 'FORBIDDEN');
