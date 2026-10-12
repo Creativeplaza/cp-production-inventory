@@ -380,9 +380,9 @@ tbody tr:last-child td{border-bottom:0}
   body>*:not(.print-area){display:none!important}
   .print-area{display:grid;grid-template-columns:repeat(5,38mm);grid-auto-rows:30mm;gap:0}
   .label{border:0.2mm dashed #bbb;padding:2mm;display:flex;gap:1.5mm;align-items:center;break-inside:avoid;color:#000;font-family:'IBM Plex Sans Thai',sans-serif;overflow:hidden}
-  .label svg{width:20mm;height:20mm;flex:none}
-  .label .t{display:grid;gap:.5mm;min-width:0}
-  .label .co{width:15mm;height:auto;display:block}
+  .label svg{width:18mm;height:18mm;flex:none}
+  .label .t{display:grid;gap:.5mm;min-width:0;flex:1 1 auto}
+  .label .co{width:100%;max-width:14.5mm;height:auto;display:block;object-fit:contain}
   .label .aid{font-size:8pt;font-weight:700}
   .label .nm{font-size:5.5pt;line-height:1.2;max-height:13mm;overflow:hidden}
 }
