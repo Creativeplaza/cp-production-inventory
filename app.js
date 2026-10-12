@@ -76,7 +76,7 @@
   ERR_TEXT.RATE_LIMIT = ERR_TEXT.RATE_LIMITED;
   ERR_TEXT.PHOTO_INVALID = 'รูปไม่ถูกต้องหรือหมดอายุ กรุณาอัปรูปใหม่'; ERR_TEXT.PAYLOAD_TOO_LARGE = 'ไฟล์รูปใหญ่เกินไป';
   ERR_TEXT.CONFIRM_MISMATCH = 'ข้อความยืนยันไม่ตรง'; ERR_TEXT.ASSET_IN_USE = 'อุปกรณ์นี้อยู่ในใบเบิกที่ยังไม่ปิด ลบไม่ได้';
-  ERR_TEXT.STOCK_SHORT = 'ของไม่พอตามจำนวนที่ขอ — ลดจำนวนแล้วลองใหม่'; ERR_TEXT.WRONG_KIND = 'ชนิดของไม่ตรงกับการทำรายการนี้'; ERR_TEXT.LEFTOVER_EXPIRED = 'เกิน 30 วันหลังจ่ายแล้ว คืนส่วนเหลือไม่ได้'; ERR_TEXT.NO_CHANGE = 'จำนวนที่นับได้เท่ากับยอดเดิม ไม่มีอะไรเปลี่ยน'; ERR_TEXT.CAPACITY = 'รหัสในหมวดนี้เต็มแล้ว';
+  ERR_TEXT.STOCK_SHORT = 'ของไม่พอตามจำนวนที่ขอ — ลดจำนวนแล้วลองใหม่'; ERR_TEXT.WRONG_KIND = 'ชนิดของไม่ตรงกับการทำรายการนี้'; ERR_TEXT.LEFTOVER_EXPIRED = 'เกิน 30 วันหลังจ่ายแล้ว คืนส่วนเหลือไม่ได้'; ERR_TEXT.NO_CHANGE = 'จำนวนที่นับได้เท่ากับยอดเดิม ไม่มีอะไรเปลี่ยน'; ERR_TEXT.CAPACITY = 'ถึงขีดจำกัดของระบบแล้ว (รหัสหรือตารางข้อมูลเต็ม) — แจ้งผู้ดูแลระบบ';
   ERR_TEXT.USER_IN_USE = 'ผู้ใช้นี้ยังถือของหรือมีใบเบิกค้าง — รับคืน/ปิดใบก่อนจึงลบได้'; ERR_TEXT.SELF_DELETE = 'ลบบัญชีของตัวเองไม่ได้';
   ERR_TEXT.CATEGORY_IN_USE = 'ยังมีอุปกรณ์ในหมวดนี้ ย้ายหมวดหรือลบอุปกรณ์ก่อน';
   ERR_TEXT.INVITE_INVALID = 'รหัสเชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้ครบแล้ว'; ERR_TEXT.ROLE_IN_USE = 'ยังมีผู้ใช้หรือรหัสเชิญที่ใช้ role นี้อยู่';
@@ -522,7 +522,7 @@
       if (a.status === 'checked_out') c.out++;
       if (isOverdueAsset(a)) c.overdue++;
     });
-    c.pending = S.loans.filter(function (l) { return l.status === 'pending' && (!S.divFilter || (l.items || []).some(function (i) { return inDiv(assetById(i.assetId) || {}); })); }).length;
+    c.pending = S.loans.filter(function (l) { return l.status === 'pending' && (!S.divFilter || (l.items || []).some(function (i) { return inDiv(assetById(i.assetId) || {}); }) || (l.stockLines || []).some(function (x) { var sx = stockById(x.stockId); return !!sx && inDiv(sx); })); }).length;
     var low = (S.stock || []).filter(function (x) { return x.active && inDiv(x) && (x.lowStock || x.deficit > 0); }).length;
     var defs = [['available', 'ว่าง', c.available], ['checked_out', 'ถูกเบิก', c.out], ['reserved', 'จอง / รออนุมัติ', c.pending], ['overdue', 'ค้างคืน', c.overdue], ['low', 'ใกล้หมด', low]];
     $('#stats').innerHTML = defs.map(function (d) {
@@ -745,16 +745,18 @@
     });
     $('#reqForm').addEventListener('submit', function (e) {
       e.preventDefault(); var f = e.target, btn = f.querySelector('[type=submit]'); btn.disabled = true;
-      var lines = Object.keys(S.stockCart).map(function (id) { return { stockId: id, qty: S.stockCart[id] }; });
-      var bad = $$('[data-sq]', $('#reqItems')).filter(function (q) { var v = +q.value; return !(v >= 1 && v <= +q.max && Math.floor(v) === v); });
+      // send exactly what the form shows (the cart may hold an older, larger number)
+      var qIn = $$('[data-sq]', $('#reqItems'));
+      var bad = qIn.filter(function (q) { var v = Number(q.value); return !(v >= 1 && v <= +q.max && Math.floor(v) === v); });
       if (bad.length) { toast('จำนวนต้องเป็นจำนวนเต็ม 1 ถึงยอดพร้อมใช้', true); btn.disabled = false; return; }
+      var lines = qIn.map(function (q) { S.stockCart[q.dataset.sq] = Number(q.value); return { stockId: q.dataset.sq, qty: Number(q.value) }; });
       var body = { project: f.project.value.trim(), dueDate: f.dueDate.value, purpose: f.purpose.value.trim() };
       if (S.cart.length) body.assetIds = S.cart.slice();
       if (lines.length) body.stockLines = lines;
+      var cur = sheetIsCurrent();
       apiPost('loan_request', body)
-        .then(function (r) { S.cart = []; S.stockCart = {}; closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); return reload(); })
-        .catch(function (r) { toast(errText(r), true); if (r && r.status === 409) reload(); })
-        .finally(function () { btn.disabled = false; });
+        .then(function (r) { S.cart = []; S.stockCart = {}; renderCart(); if (cur()) { closeSheet(); toast('ส่งคำขอแล้ว · ' + r.loan.loanId); } return reload(); })
+        .catch(function (r) { if (cur()) { toast(errText(r), true); btn.disabled = false; } if (r && r.status === 409) reload(); });
     });
   }
 
@@ -870,7 +872,7 @@
       if (edit) body.stockId = x.stockId; else { body.category = f.category.value; body.unit = f.unit.value.trim(); body.initialQty = init; }
       var g = S.gen, mg = S.modal; btn.disabled = true;
       apiPost(edit ? 'stock_update' : 'stock_create', body).then(function (r) {
-        if (g !== S.gen) return; toast((edit ? 'บันทึก ' : 'เพิ่ม ') + r.stock.stockId + ' แล้ว'); if (mg === S.modal) openStock(r.stock.stockId); reload();
+        if (g !== S.gen) return; if (mg === S.modal) { toast((edit ? 'บันทึก ' : 'เพิ่ม ') + r.stock.stockId + ' แล้ว'); openStock(r.stock.stockId); } reload();
       }).catch(function (r) { if (g === S.gen && mg === S.modal) { toast(errText(r), true); btn.disabled = false; } });
     });
   }
@@ -932,7 +934,7 @@
       var g = S.gen, mg = S.modal; btn.disabled = true;
       apiPost(rec ? 'stock_receive' : 'stock_adjust', body).then(function (r) {
         if (g !== S.gen) return;
-        toast(r.warning === 'RESERVED_EXCEEDS' ? 'บันทึกแล้ว — ตอนนี้จองเกินของที่มี ' + r.deficit + ' ' + x.unit : (rec ? 'รับเข้า ' + q + ' ' + x.unit + ' แล้ว' : 'บันทึกยอดตรวจนับแล้ว'), r.warning === 'RESERVED_EXCEEDS');
+        if (mg === S.modal) toast(r.warning === 'RESERVED_EXCEEDS' ? 'บันทึกแล้ว — ตอนนี้จองเกินของที่มี ' + r.deficit + ' ' + x.unit : (rec ? 'รับเข้า ' + q + ' ' + x.unit + ' แล้ว' : 'บันทึกยอดตรวจนับแล้ว'), r.warning === 'RESERVED_EXCEEDS');
         if (mg === S.modal) openStock(x.stockId); reload();
       }).catch(function (r) { if (g === S.gen && mg === S.modal) { toast(errText(r), true); btn.disabled = false; } });
     });
@@ -1212,8 +1214,12 @@
     return a;
   }
   // A loan closes when every item is returned OR lost; returnedAt is the closure time, not proof of physical return.
-  function loanHasLost(l) { return (l.items || []).some(function (i) { return i.itemStatus === 'lost'; }); }
-  function loanStatusText(l) { return l.status === 'returned' && loanHasLost(l) ? 'ปิดใบ (มีของสูญหาย)' : (LOAN_STATUS[l.status] || l.status); }
+  // v0.13 (GPT review S3-2): stock lines count too — a counted loss is a loss, and a loan closed by use (consumable
+  // or counted used) or a short/zero issue is "ปิดใบ", not a full physical return.
+  function loanHasLost(l) { return (l.items || []).some(function (i) { return i.itemStatus === 'lost'; }) || (l.stockLines || []).some(function (x) { return x.qtyLost > 0; }); }
+  function loanFullyReturned(l) { return !loanHasLost(l) && (l.stockLines || []).every(function (x) { return x.lineStatus === 'cancelled' || (x.qtyIssued > 0 && x.qtyReturned === x.qtyIssued); }); }
+  function closedText(l) { return loanHasLost(l) ? 'ปิดใบ (มีของสูญหาย)' : loanFullyReturned(l) ? 'คืนครบ' : 'ปิดใบ'; }
+  function loanStatusText(l) { return l.status === 'returned' ? closedText(l) : (LOAN_STATUS[l.status] || l.status); }
   function loanPillClass(l) { return l.status === 'returned' && loanHasLost(l) ? 'lost' : l.status; }
   function loanOverdue(l) { return (l.status === 'checked_out' || l.status === 'partially_returned') && l.dueDate < today(); }
   function renderLoans() {
@@ -1260,7 +1266,7 @@
       '<div class="row" style="justify-content:space-between;align-items:center"><span><span class="id">' + esc(l.loanId) + '</span> · ' + esc(l.project) + '</span>' +
       '<span style="flex:0">' + pill(od ? 'overdue' : loanPillClass(l), od ? 'เกินกำหนด ' + daysLate(l.dueDate) + ' วัน' : loanStatusText(l)) + '</span></div>' +
       '<div class="meta">ผู้เบิก ' + esc(l.requesterName || l.requester) + delMark(l.requester) + (contactOf(l.requester) ? ' <span class="contact">(' + esc(contactOf(l.requester)) + ')</span>' : '') + deciderText(l) + '</div>' +
-      '<div class="meta">ขอ ' + fmtDT(l.requestedAt) + ' · ออก ' + fmtDT(l.checkedOutAt) + ' · กำหนดคืน ' + fmtDate(l.dueDate) + (l.returnedAt ? (loanHasLost(l) ? ' · ปิดใบ ' : ' · คืนครบ ') + fmtDT(l.returnedAt) : '') + '</div>' +
+      '<div class="meta">ขอ ' + fmtDT(l.requestedAt) + ' · ออก ' + fmtDT(l.checkedOutAt) + ' · กำหนดคืน ' + fmtDate(l.dueDate) + (l.returnedAt ? (loanFullyReturned(l) ? ' · คืนครบ ' : ' · ปิดใบ ') + fmtDT(l.returnedAt) : '') + '</div>' +
       (l.purpose ? '<div class="meta">' + esc(l.purpose) + '</div>' : '') + (l.rejectReason ? '<div class="meta overdue-txt">เหตุผล: ' + esc(l.rejectReason) + '</div>' : '') +
       '<ul class="loan-items">' + items + '</ul>' + (acts ? '<div class="loan-actions">' + acts + '</div>' : '') + '</div></li>';
   }
@@ -1274,9 +1280,9 @@
     var x = (l.stockLines || []).find(function (y) { return y.stockId === stockId; }); if (!x) return;
     var v = prompt('คืนส่วนเหลือ ' + x.name + ' เข้าสต็อก\nจำนวน (1–' + x.qtyUsed + ' ' + x.unit + ')'); if (v === null) return;
     var q = Number(v.trim()); if (!(q >= 1 && q <= x.qtyUsed && Math.floor(q) === q)) { toast('จำนวนต้องเป็นจำนวนเต็ม 1–' + x.qtyUsed, true); return; }
-    btn.disabled = true;
-    apiPost('stock_return_leftover', { loanId: loanId, stockId: stockId, qty: q }).then(function () { toast('คืนเข้าสต็อก ' + q + ' ' + x.unit + ' แล้ว'); return reload(); })
-      .catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
+    btn.disabled = true; var cur = sheetIsCurrent();
+    apiPost('stock_return_leftover', { loanId: loanId, stockId: stockId, qty: q }).then(function () { if (cur()) toast('คืนเข้าสต็อก ' + q + ' ' + x.unit + ' แล้ว'); return reload(); })
+      .catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
   }
   function openLoan(id) {
     var l = S.loans.find(function (x) { return x.loanId === id; }); if (!l) return;
@@ -1295,8 +1301,9 @@
     else if (act === 'checkout') { if (!confirm('ยืนยันจ่ายของ ' + l.items.length + ' ชิ้น ให้ ' + (l.requesterName || l.requester) + '?')) return; }
     else if (!confirm(label + ' ใบเบิก ' + id + '?')) return;
     btn.disabled = true;
-    apiPost('loan_' + act, body).then(function () { toast(label + 'แล้ว · ' + id); closeSheet(); return reload(); })
-      .catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { btn.disabled = false; });
+    var cur = sheetIsCurrent();
+    apiPost('loan_' + act, body).then(function () { if (cur()) { toast(label + 'แล้ว · ' + id); closeSheet(); } return reload(); })
+      .catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { if (cur()) btn.disabled = false; });
   }
   // v0.13 §23.5: one checkout per loan; a stock line may be issued short (the rest is dropped, never issued later)
   function openCheckout(l) {
@@ -1315,9 +1322,10 @@
       var issue = $$('[data-iq]', e.target).map(function (q) { return { stockId: q.dataset.iq, qty: Number(q.value), max: +q.max }; });
       if (issue.some(function (i) { return !(i.qty >= 0 && i.qty <= i.max && Math.floor(i.qty) === i.qty); })) { toast('จำนวนจ่ายต้องเป็นจำนวนเต็ม 0 ถึงจำนวนที่ขอ', true); return; }
       btn.disabled = true;
+      var cur = sheetIsCurrent();
       apiPost('loan_checkout', { loanId: l.loanId, stockIssue: issue.map(function (i) { return { stockId: i.stockId, qty: i.qty }; }) })
-        .then(function () { toast('จ่ายของแล้ว · ' + l.loanId); closeSheet(); return reload(); })
-        .catch(function (r) { toast(errText(r), true); btn.disabled = false; reload(); });
+        .then(function () { if (cur()) { toast('จ่ายของแล้ว · ' + l.loanId); closeSheet(); } return reload(); })
+        .catch(function (r) { if (cur()) { toast(errText(r), true); btn.disabled = false; } reload(); });
     });
   }
   function openReturn(l) {
@@ -1374,10 +1382,12 @@
       var rb = { loanId: l.loanId };
       if (items.length) rb.items = items;
       if (sret.length) rb.stockReturn = sret.map(function (x) { var o = { stockId: x.stockId, returned: x.returned, used: x.used, lost: x.lost }; if (x.reason) o.reason = x.reason; return o; });
+      var cur = sheetIsCurrent();
       apiPost('loan_return', rb).then(function (r) {
         var done = r.loan && r.loan.status === 'returned';
-        toast(done ? (loanHasLost(r.loan) ? 'ปิดใบแล้ว (มีของสูญหาย) · ' : 'คืนครบแล้ว · ') + l.loanId : 'บันทึกแล้ว ' + (items.length + sret.length) + ' รายการ'); closeSheet(); return reload();
-      }).catch(function (r) { toast(errText(r), true); reload(); }).finally(function () { refresh(); });
+        if (cur()) { toast(done ? (loanHasLost(r.loan) ? 'ปิดใบแล้ว (มีของสูญหาย) · ' : loanFullyReturned(r.loan) ? 'คืนครบแล้ว · ' : 'ปิดใบแล้ว · ') + l.loanId : 'บันทึกแล้ว ' + (items.length + sret.length) + ' รายการ'); closeSheet(); }
+        return reload();
+      }).catch(function (r) { if (cur()) toast(errText(r), true); reload(); }).finally(function () { if (cur()) refresh(); });
     });
   }
 
@@ -1753,6 +1763,9 @@
 
   /* ---------- sheet ---------- */
   var onSheetClose = null;
+  // A save that is still pending when the user opens another sheet must not close, toast into, or re-enable
+  // controls of that newer sheet (GPT v0.13 frontend review S3-1). The data still updates through reload().
+  function sheetIsCurrent() { var mg = S.modal; return function () { return mg === S.modal; }; }
   function openSheet(title, html, onClose) {
     S.modal++; hideHover();
     if (onSheetClose) { var f = onSheetClose; onSheetClose = null; f(); }
