@@ -1983,7 +1983,9 @@
     if (reduceMotion || e.button > 0) return;
     var t = e.target.closest(TAP); if (!t || t.disabled) return;
     var host = t.matches('.item .main') ? t.closest('.item') : t;
-    host.classList.add('tap-host');
+    // Only give static elements a positioning context: forcing position:relative on a fixed/absolute/sticky
+    // control (the scan FAB) moved it out from under the finger mid-tap, so the click landed elsewhere.
+    if (!host.classList.contains('tap-host') && getComputedStyle(host).position === 'static') host.classList.add('tap-host');
     var wrap = host.querySelector(':scope > .rpl-wrap');
     if (!wrap) { wrap = document.createElement('span'); wrap.className = 'rpl-wrap'; host.appendChild(wrap); }
     var r = host.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2, s = document.createElement('span');
