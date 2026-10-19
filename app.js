@@ -1068,6 +1068,7 @@
       .then(function (r) { return r.photo; });
   }
   // A photo picker bound to a container. existing = [{photoId, thumb}] (asset edit). Returns a controller.
+  // No capture attribute by default: with it, phones open the camera only; without it they offer camera or gallery (owner 2026-10-19).
   function photoPicker(el, kind, opts) {
     // Bound to the session + modal it was opened in: async work (shrink/upload) that finishes after a
     // logout, re-login or a different sheet must never start a request or touch the DOM.
@@ -1088,7 +1089,7 @@
         return '<div class="ph' + (it.state === 'up' ? ' up' : it.state === 'err' ? ' err' : '') + '">' + (it.thumb ? '<img alt="" src="' + esc(it.thumb) + '">' : '') +
           (it.state === 'up' ? '<span class="ph-spin"></span>' : '') + (it.state === 'err' ? '<span class="ph-msg">อัปไม่สำเร็จ</span>' : '') +
           '<button type="button" class="ph-x" data-k="' + k + '" aria-label="ลบรูป">' + ICON_X + '</button></div>';
-      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*"' + (opts.capture === false ? '' : ' capture="' + (opts.capture || 'environment') + '"') + (opts.max > 1 ? ' multiple' : '') + ' hidden></label>' : '') +
+      }).join('') + (items.length < opts.max ? '<label class="ph ph-add">' + ICON_CAM + '<span>' + (items.length ? 'เพิ่มรูป' : 'ถ่าย / เลือกรูป') + '</span><input type="file" accept="image/*"' + (opts.capture ? ' capture="' + opts.capture + '"' : '') + (opts.max > 1 ? ' multiple' : '') + ' hidden></label>' : '') +
         '</div><p class="muted small ph-hint">' + (opts.min ? 'ต้องมีอย่างน้อย ' + opts.min + ' รูป · ' : '') + 'สูงสุด ' + opts.max + ' รูป</p>';
       var input = el.querySelector('input[type=file]'); if (input) input.onchange = function () { add(Array.prototype.slice.call(input.files)); };
       if (ctl.onchange) ctl.onchange();
